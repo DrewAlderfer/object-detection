@@ -20,6 +20,8 @@ ipython_config.py
 data/*
 *.tar.gz
 *.zip
+old/*
+*/old/
 
 
 # Remove previous ipynb_checkpoints
