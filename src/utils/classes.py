@@ -4,6 +4,7 @@ from typing import Union, Tuple, List
 
 import numpy as np
 import matplotlib as plt
+from numpy.typing import ArrayLike
 from tensorflow.keras.utils import load_img
 
 class data_generator:
@@ -98,3 +99,48 @@ class data_generator:
                 print("[]", end="")
         print(f"\n\nReturning mask stack with shape: {y_set.shape}")
         return y_set
+
+class CategoricalDataGen:
+    def __init__(self, data_type:str, data_ref:dict, image_path:str, target_size:Union[ArrayLike, None]=None):
+        self.name = data_type
+        self.lookup = data_ref[self.name]
+        self.X_path = image_path 
+        self.target_size = target_size
+
+    def batch(self, batch_size:int=32, normalize:bool=True):
+
+        
+        _annot_copy = self.lookup['annotations']
+
+        data_len = len(self.lookup['img_data'])
+        if batch_size is None:
+            batch_size = data_len
+        batches = divmod(data_len, batch_size)
+        count = 0
+        for batch in range(batches[0] + 1):
+            batch_X = np.empty((0,), dtype=np.float32)
+            batch_y = np.empty((0, 13), dtype=np.float32)
+            for i in range(batch_size):
+                file_name = self.lookup['img_data'][i]['file_name']
+                img_id = self.lookup['img_data'][i]['id']
+
+                img = np.asarray(load_img(f"{self.X_path}/{self.name}/{file_name}", target_size=self.target_size), dtype=np.float32)
+                if normalize:
+                    img = img / 255
+                img = img.reshape((1,) + img.shape)
+
+                img_classes = np.zeros((1, 13), dtype=np.float32)
+                for pos, entry in enumerate(_annot_copy):
+                    if entry['image_id'] == img_id:
+                        img_classes[0, entry['category_id'] - 1] = 1
+                        _annot_copy.pop(pos)
+                if batch_X.shape == (0,):
+                    batch_X = np.empty((0,) + img.shape[1:], dtype=np.float32)
+                batch_X = np.append(batch_X, img, axis=0)
+                batch_y = np.append(batch_y, img_classes, axis=0)
+                count += 1
+                if count == data_len:
+                    break
+            yield batch_X, batch_y
+                    
+            

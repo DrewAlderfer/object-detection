@@ -1,5 +1,7 @@
 from typing import Union, Tuple, List
+from pathlib import Path
 
+from pycocotools.coco import COCO
 import matplotlib as plt
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
@@ -73,3 +75,20 @@ def make_masks(
         results = np.append(results, mask_data.reshape(target_size + (1,)), axis=2)
 
     return results
+
+def init_COCO(divs:List[str]):
+    result = {}
+    for target in divs:
+        file = Path(f"/content/data/mvtec_screws_{target}.json")
+        db = COCO(file)
+
+        ids = db.getImgIds()
+        imgs = db.loadImgs(ids)
+        annIds = db.getAnnIds(ids)
+        print(f"Found {len(imgs)} {target} images")
+        result.update({target: {"coco": db,
+                                "ids": ids,
+                                "img_data": imgs,
+                                "annotations": db.loadAnns(annIds)}
+                       })
+    return result

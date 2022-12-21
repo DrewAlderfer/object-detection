@@ -22,6 +22,8 @@ data/*
 *.zip
 old/*
 */old/
+uploads/*
+*/uploads/
 
 
 # Remove previous ipynb_checkpoints
