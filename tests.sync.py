@@ -132,20 +132,20 @@ intersections = box_cutter.construct_intersection(label_corners, pred_corners)
 print(intersections.shape)
 
 # %%
-box_cutter.calculate_iou(label_corners, pred_corners)
+areas = box_cutter.calculate_iou(label_corners, pred_corners)
 
 # %%
-x = intersections[..., :-1, :]
-mask = tf.cast(tf.abs(x) > .1, dtype=tf.float32)
-z = tf.reduce_max(tf.cast(mask, dtype=tf.int32), axis=-1)
-# y = np.full((tf.rank(x),) + (2,), [1, 1], dtype=np.int32)
-indice = tf.reduce_sum(z, axis=-1)
-print(indice.shape)#+ tf.shape(indice.shape[-1]))
-updates = x[..., 0, :]
-print(updates.shape)
-print(updates[0, 5, 8])
+print(f"Intersection Area: {areas.shape}\n{areas[0, 5, 6]}")
 
-tf.scatter_nd(indice, updates, shape=tf.shape(updates))
+# %%
+box = label_corners[0, 5, 8].numpy()
+print(box.shape)
+area = np.empty((4, 2), dtype=np.float32)
+for i in range(4):
+    area[i] = np.abs(box[-1 + i] - box[i])
+area = np.sum(area, axis=0)
+area = area[0] * area[1]
+print(area)
 
 
 # %%
@@ -273,3 +273,27 @@ def get_intersections(edge1, edge2):
 get_intersections(true_edges, pred_edges)
 
 # %%
+value = np.array([[1, 1],
+                  [2, 2],
+                  [3, 3],
+                  [4, 4],
+                  [5, 5],
+                  [6, 6],
+                  [7, 7],
+                  [8, 8]])
+
+x = np.full((12, 9, 8, 2), value, dtype=np.float32)
+tensor = tf.constant(x)
+tile = np.random.randint(2, size=(12 * 9, 8))
+
+# %%
+r_tensor = tf.reshape(tensor, [12  * 9, 8, 2])
+tile_2d = tf.transpose(tf.reshape(tf.tile(tile, [1, 2]), [12 * 9, 2, 8]), perm=[0, 2, 1])
+mask = tf.sort(tile_2d, direction="DESCENDING", axis=-2)
+print(mask.shape)
+ma_tensor = tf.ragged.boolean_mask(r_tensor, tf.cast(mask, dtype=tf.bool))
+ma_tensor = tf.roll(ma_tensor, shift=-1, axis=-2)
+# tensor = tf.roll(tensor, shift=-1, axis=-2)
+print(ma_tensor.shape)
+print(ma_tensor[5:7].numpy())
+

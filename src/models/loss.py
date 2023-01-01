@@ -23,13 +23,39 @@ class BoundingBox_Processor:
             print(message, **kwargs)
     
     def construct_intersection(self, box1, box2, return_centered:bool=True):
+        """
+        This Function takes two tensors representing sets of bounding boxes (i.e. labels and predictions)
+        and constructs a new tensor that represents the points of the intersection between the paired
+        entries for each bounding box set.
 
+        Returns:
+            It returns a tensor containing a sorted list of 9 points for each paired set of boxes. If there
+            were no intersection points or less than 8 it returns those values as [0, 0]. The last
+            point in each list is the center point.
+
+            All points before the center point are sorted based on their atan2(y,x) angle from the 
+            center. the center is calculated as the mean value of the points making up the 
+            intersection.
+        """
+
+        # getting the points that intersection along the edges of the two boxes.
         intersections, box1_edges, box2_edges = self.rolling_intersection(box1, box2)
-        inner_points = tf.concat([self.find_inner_points(box1, box2_edges), self.find_inner_points(box2, box1_edges)], axis=-2)
+
+        # getting the points that represent corners of boxes that lay inside the other box.
+        inner_points = tf.concat([self.find_inner_points(box1, box2_edges),
+                                  self.find_inner_points(box2, box1_edges)], axis=-2)
+
+        # combining the two lists
         intersection_points = tf.concat([intersections, inner_points], axis=-2)
         
+        # creating a mask to keep from operating on 0, 0 values.
         non_zero = tf.cast(intersection_points > .1, tf.float32)
         mask = tf.cast(intersection_points > .1, dtype=tf.bool)
+
+        # I'm calculating the mean(x, y) point by summing x and y in each list and then dividing by
+        # the count of non_zero (0 ,0) points in each list. using a builtin mean function divides the
+        # sum by the total slots in each list rather than the number of points that were actually
+        # found, which might be different for each list in the tensor.
 
         denomenator = tf.reduce_sum(non_zero, axis=-2)
         center = tf.reduce_sum(intersection_points, axis=-2) / denomenator
@@ -37,12 +63,21 @@ class BoundingBox_Processor:
                                      intersection_points - tf.expand_dims(center, axis=-2),
                                      non_zero)
 
-        
+        # calculating the angle of each point from the center which will be used to sort the points
         point_angle = tf.where(mask, tf.math.atan2(center_adj_points[..., :, 1:],
                                                    center_adj_points[..., :, 0:1]) + np.pi,
                                non_zero)
 
         point_order = tf.argsort(tf.transpose(point_angle, perm=[0, 1, 2, 4, 3]), direction="DESCENDING", axis=-1)
+
+        # I am going to sort by first sorting the tensor holding the angles of each point, and then
+        # taking sort and applying it to the tensor containing the points the angles were generated
+        # from. Inorder to get the gather method to work correctly it was necessary to flip the last dims
+        # 
+        # Here I am also branching the function to allow access to the center adjusted points or the
+        # true coordinate positions of each point. Center adjusted will make it easier to calculate
+        # area and true coordinate values will make it easier to display or graph. The center is
+        # always returned as it's actual coordinate so either way you can calculate the value.
 
         points_T = None
         if return_centered:
@@ -53,6 +88,9 @@ class BoundingBox_Processor:
         sorted_points = tf.transpose(tf.gather(points_T, point_order, batch_dims=-1), perm=[0, 1, 2, 4, 3])
         result = tf.concat([sorted_points[..., :8, :], tf.expand_dims(center, axis=-2)], axis=-2)
 
+        # TODO Decide whether you want to keep this branching thing or just return the center adjusted
+        # points. Also, consider just return a tuple of the (perimeter_points, center_point) rather
+        # than packing the center into the last dim of the tensor.
         return result
 
     def calculate_iou(self, box1, box2):
@@ -60,46 +98,61 @@ class BoundingBox_Processor:
         intersection_points = self.construct_intersection(box1, box2, return_centered=True)
         points = intersection_points[..., :8, :]
         center = intersection_points[..., 8:, :]
-        area = self.traingle_area(points)
+        intersection = self.intersection_area(points)
         
-    def traingle_area(self, points):
-
+        return intersection
+        # union = self.get_union(box1, box2, intersection)
+        
+    def intersection_area(self, points):
+        """
+        Finds the area of the intersection given a list of points representing the perimeter of the
+        intersection shape. Must be convex.
+        """
         ones = tf.ones(points.shape[:-1] + (1,), dtype=tf.float32)
-        triangle_matrix = tf.concat([points, ones], axis=-1)
-        print(triangle_matrix[0, 5, 8])
-        mask = tf.cast(tf.abs(tf.reduce_sum(triangle_matrix, axis=-1)) > 1, dtype=tf.float32)
-        triangle_matrix = tf.reshape(triangle_matrix, triangle_matrix.shape[:-2] + (4, 2, 3))
-        print(triangle_matrix[0,5,8])
-        print(f"triangle_matrix: {triangle_matrix.shape}")
-        # for _ in range(8):
-        #     # center = np.full(triangle_matrix[..., :2, :].shape[:-2] + (1, 3), [0, 0, 1], dtype=np.float32)
-        #     # triangle = tf.concat([triangle_matrix[...,0:2, :], center], axis=-2)
-        #     print(triangle_matrix[0, 5, 8, :2])
-        #     # det = tf.abs(tf.linalg.det(triangle) * .5)
-        #     # print(f"triangle: {triangle.shape}")
-        #     # print(triangle[0, 5, 8].numpy())
-        #     # print(f"\ndeterminant {det.shape}")
-        #     # print(f"triangle area = {det[0, 5, 8].numpy()}")
-        #     triangle_matrix = tf.roll(triangle_matrix, shift=-1, axis=-2)
+        static_matrix = tf.concat([points, ones], axis=-1)
+        static_mask = tf.cast(tf.reduce_sum(tf.abs(static_matrix), axis=-1) > 1.1, dtype=tf.bool)
+        rolling_mask = static_mask
+        rolling_matrix = static_matrix
 
-        # get the points subract the center from them
-        # something to consider is not returning the actual points. If you are just using them to
-        # get the area and the shortest path to that is just taking the triangle areas to from (0, 0)
+        determinant = None
+        for i in range(8):
+            # selecting the top two points from the rolling tensors to create an edge
+            partial_mask = tf.reshape(rolling_mask[..., :2], rolling_mask.shape[:-1] + (2, 1))
+            triangle = rolling_matrix[...,0:2, :].numpy()
 
-    def intersection_area(self):
-        P = self.intersection
-        C = self.inter_center
-        result = 0
-        for i in range(len(self.intersection)):
-            j = i - 1
-            triangle = np.array([[P[i - 1][0], P[i - 1][1], 1],
-                                 [P[i][0],     P[i][1],     1],
-                                 [C[0],        C[1],        1]], dtype=np.float32)
-            result += np.abs(np.linalg.det(triangle) * .5)
+            # creating the center point at (0, 0) *** Note *** the intersection was centered around 
+            # (0, 0) by subtracting the center point (mean(x, y)) from each point in the list.
+            center = np.full(rolling_matrix[..., :2, :].shape[:-2] + (1, 3), [0, 0, 1], dtype=np.float32)
 
-        return result
+            # This fill tensor will be used to insert the first point from the list after the last point
+            triangle_fill = tf.stack([triangle[..., 0, :], static_matrix[..., 0, :]], axis=-2)
+
+            # Here I am using the mask to determine to splice the fill values into the point tensor
+            # at the correct location so that as the rolling tensor comes to the last point it will
+            # wrap back to the first. After the the determinant of each triangle matrix should reutrn
+            # zero because there can be no more than one point (and the center) in each.
+            triangle = tf.where(tf.math.logical_xor(partial_mask[..., 0:1, :], partial_mask[..., 1:,:]), triangle_fill, triangle)
+            triangle = np.concatenate([triangle, center], axis=-2)
+            
+            # just a initialization gate for the determinant tensor
+            if determinant is None:
+                determinant = tf.expand_dims(tf.abs(tf.linalg.det(triangle) * .5), axis=-1)
+                rolling_matrix = tf.roll(rolling_matrix, shift=-1, axis=-2)
+                rolling_mask = tf.roll(rolling_mask, shift=-1, axis=-1)
+                continue
+
+            determinant = tf.concat([determinant, tf.expand_dims(tf.abs(tf.linalg.det(triangle) * .5), axis=-1)], axis=-1)
+            rolling_matrix = tf.roll(rolling_matrix, shift=-1, axis=-2)
+            rolling_mask = tf.roll(rolling_mask, shift=-1, axis=-1)
+        
+        # Sum and return the area of the traingles forming the intersection
+        return tf.reduce_sum(determinant, axis=-1)
 
     def rolling_intersection(self, box1, box2):
+        """
+        Calculates the points of edge intersection between two parallelograms by roling one tensor of
+        corner points over the other to create edges.
+        """
         box1_edges = self.get_edges(box1)
         box2_edges = self.get_edges(box2) 
         edge_intersections = None
@@ -185,6 +238,10 @@ class BoundingBox_Processor:
         return self.process_box_vector(vector_slices) 
         
     def rotate_box_points(self, box_points, box_center, angle):
+        """
+        Takes a set of corner and center points along with the angle of alignment for the box and
+        rotates the points to align with that angle.
+        """
         # Instatiate an array that will recieve the rotation vaules from the angle tensor
         R = np.zeros((angle.shape[:-1] + (2, 2)))
 
@@ -205,6 +262,9 @@ class BoundingBox_Processor:
         return result
 
     def get_intersections(self, edge1, edge2):
+        """
+        Takes two edges and returns the point of intersection between them if one exists.
+        """
         self.debug = True
         edge_a = edge1[..., 0:1, :, :]
         edge_b = edge2[..., 0:, :, :]
@@ -218,9 +278,13 @@ class BoundingBox_Processor:
         y3 = edge_b[..., 0:1, 1:]
         x4 = edge_b[..., 1:, 0:1]
         y4 = edge_b[..., 1:, 1:]
-        
+       
+        # this is kind of like taking the area of a plane created between the two edges and then
+        # subtracting them. If it equals zero then the edges are colinear.
         denom =  (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1)
 
+        # These check to see if the point of intersection falls along the line segments of the edge
+        # ua and ub have a domain of 0 to 1 if the point is a valid intersection along the segments.
         ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denom
         zeros = tf.fill(tf.shape(ua), 0.0)
         ones = tf.fill(tf.shape(ua), 1.0)
@@ -236,13 +300,15 @@ class BoundingBox_Processor:
 
         mask = tf.logical_and(mask_a, mask_b)
 
-        
+        # This actually just says where the intersection is 
         xnum = (x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)
         ynum = (x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)
 
         x_i = (xnum / denom)
         y_i = (ynum / denom)
-
+        
+        # here I am using the mask to multiply any intersections that didn't fall along the segments
+        # by zero and all the ones that did by one.
         mask = tf.cast(tf.squeeze(mask, axis=[-1]), dtype=tf.float32)
         intersections = tf.multiply(tf.squeeze(tf.stack([x_i, y_i], axis=-3), axis=[-2, -1]), mask)
 
