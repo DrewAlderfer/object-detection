@@ -92,17 +92,69 @@ class BoundingBox_Processor:
         # points. Also, consider just return a tuple of the (perimeter_points, center_point) rather
         # than packing the center into the last dim of the tensor.
         return result
+    def calculate_GIoU(self, box1, box2):
+        """
+        Calculate the GIoU of the two bounding boxes.
+        """        
+        # Create a tensor that represents the min and max x/y values from both boxes
+        # combine the box1 and box2 tensors?
 
-    def calculate_iou(self, box1, box2):
+        # box.shape = (batch, xdiv, ydiv, 4, 2) 
+        big_box = tf.concat([box1, box2], axis=-2)
+
+        big_box = tf.transpose(big_box, perm=[0, 1, 2, 4, 3])
+        gMax = tf.sort(big_box, axis=-1, direction="DESCENDING")[..., :, 0:1]
+        gMin = tf.sort(big_box, axis=-1)[..., :, 0:1]
+
+        gMax = tf.transpose(gMax, perm=[0, 1, 2, 4, 3])
+        gMin = tf.transpose(gMin, perm=[0, 1, 2, 4, 3])
+
+        C = tf.squeeze((gMax[..., 0:1] - gMin[..., 0:1]) * (gMax[..., 1:] - gMin[..., 1:]), axis=[-2, -1])
+        print(f"C shape {C.shape}")
         
         intersection_points = self.construct_intersection(box1, box2, return_centered=True)
         points = intersection_points[..., :8, :]
         center = intersection_points[..., 8:, :]
+
         intersection = self.intersection_area(points)
+
+        union = self.get_union(box1, box2, intersection)
+
+        print(f"Union: {union.shape}")
+        print(f"Intersection: {intersection.shape}")
+
+        return (intersection/union) - (tf.abs(C / union) / C)
+
+
+    def calculate_iou(self, box1, box2):
+        """
+        Calculate the IoU (Intersection over Union) of two boxes.
+        """
+        intersection_points = self.construct_intersection(box1, box2, return_centered=True)
+        points = intersection_points[..., :8, :]
+        center = intersection_points[..., 8:, :]
+        intersection = self.intersection_area(points)
+         
+        union = self.get_union(box1, box2, intersection)
+
+        return intersection / union       
+
+    def get_union(self, box1, box2, intersection):
+        # box.shape = (batch, xdiv, ydiv, 4, 2) 
+        # int.shape = (batch, xdiv, ydiv, 1)
+
+        determinate_1 = np.ones(box1.shape[:-2] + (3,3), dtype=np.float32)
+        determinate_2 = np.ones(box2.shape[:-2] + (3,3), dtype=np.float32)
+        determinate_1[..., :,:2] = determinate_1[..., :,:2] * box1[..., 0:-1, :]
+        determinate_2[..., :,:2] = determinate_2[..., :,:2] * box2[..., 0:-1, :]
         
-        return intersection
-        # union = self.get_union(box1, box2, intersection)
-        
+        box1_area = np.abs(np.linalg.det(determinate_1))
+        box2_area = np.abs(np.linalg.det(determinate_2))
+
+        union = (box1_area + box2_area) - intersection
+
+        return union
+
     def intersection_area(self, points):
         """
         Finds the area of the intersection given a list of points representing the perimeter of the
@@ -373,19 +425,6 @@ class BoundingBox_Processor:
 
         return intersection / union
 
-    def union(self):
-
-        determinate_1 = np.ones((3,3), dtype=np.float32)
-        determinate_2 = np.ones((3,3), dtype=np.float32)
-        determinate_1[:,:2] = determinate_1[:,:2] * self.label_box[1:]
-        determinate_2[:,:2] = determinate_2[:,:2] * self.pred_box[1:]
-        
-        box1_area = np.abs(np.linalg.det(determinate_1))
-        box2_area = np.abs(np.linalg.det(determinate_2))
-        intersection = self.intersection_area()
-        union = (box1_area + box2_area) - intersection
-
-        return union
 
     def IoU(self, y_true, pred):
         pass

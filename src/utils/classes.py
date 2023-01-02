@@ -444,15 +444,13 @@ class test_box:
         return intersection / union
 
 class bbox_worker:
-    def __init__(self, label_vector:list, pred_vector:list, debug:bool=False):
+    def __init__(self, label_box, pred_box, debug:bool=False):
 
         self.debug = debug
 
-        self.label_box = self.make_box(label_vector)
-        self.pred_box = self.make_box(pred_vector)
-
-        self.intersection = self._intersection_points()
-        self.inter_center = np.mean(self.intersection, axis=0)
+        self.box1 = label_box
+        self.box2 = pred_box
+        self.inter_center = None
 
     def make_box(self, box_vector):
 
@@ -493,13 +491,13 @@ class bbox_worker:
 
     def check_corners(self):
         results = np.empty((0, 2), dtype=np.float32)
-        for corner in self.label_box:
-            if self.is_inside(corner, self.pred_box):
+        for corner in self.box1:
+            if self.is_inside(corner, self.box2):
                 # print(f"\nfound corner of box1:\n{corner}\nin box2")
                 results = np.append(results, corner.reshape(1, 2), axis=0)
 
-        for corner in self.pred_box:
-            if self.is_inside(corner, self.label_box):
+        for corner in self.box2:
+            if self.is_inside(corner, self.box1):
                 # print(f"\nfound corner of box2:\n{corner}\nin box1")
                 results = np.append(results, corner.reshape(1, 2), axis=0)
         return results
@@ -534,17 +532,17 @@ class bbox_worker:
           
 
 
-    def _intersection_points(self):
+    def _intersection_points(self, box1, box2):
 
-        edges1 = [(self.label_box[0], self.label_box[1]),
-                  (self.label_box[1], self.label_box[2]),
-                  (self.label_box[2], self.label_box[3]),
-                  (self.label_box[3], self.label_box[0])]
+        edges1 = [(box1[0], box1[1]),
+                  (box1[1], box1[2]),
+                  (box1[2], box1[3]),
+                  (box1[3], box1[0])]
         
-        edges2 = [(self.pred_box[0], self.pred_box[1]),
-                  (self.pred_box[1], self.pred_box[2]),
-                  (self.pred_box[2], self.pred_box[3]),
-                  (self.pred_box[3], self.pred_box[0])]
+        edges2 = [(box2[0], box2[1]),
+                  (box2[1], box2[2]),
+                  (box2[2], box2[3]),
+                  (box2[3], box2[0])]
 
         results = np.empty((0, 2))
 
@@ -560,11 +558,11 @@ class bbox_worker:
 
         return sorted(results, key=self.clockwise_sort)
 
-    def intersection_area(self):
-        P = self.intersection
+    def intersection_area(self, box1, box2):
+        P = self._intersection_points(box1, box2)
         C = self.inter_center
         result = 0
-        for i in range(len(self.intersection)):
+        for i in range(len(P)):
             j = i - 1
             triangle = np.array([[P[i - 1][0], P[i - 1][1], 1],
                                  [P[i][0],     P[i][1],     1],
@@ -578,32 +576,32 @@ class bbox_worker:
         # print(f"Point at ({x}, {y})\nhas arctan of {np.arctan(y/x):.4f}")
         return np.arctan2(y, x)
     
-    def IoU(self):
+    def IoU(self, box1, box2):
 
+        intersection = self.intersection_area(box1, box2)
         determinate_1 = np.ones((3,3), dtype=np.float32)
         determinate_2 = np.ones((3,3), dtype=np.float32)
-        determinate_1[:,:2] = determinate_1[:,:2] * self.label_box[1:]
-        determinate_2[:,:2] = determinate_2[:,:2] * self.pred_box[1:]
+        determinate_1[:,:2] = determinate_1[:,:2] * box1[1:]
+        determinate_2[:,:2] = determinate_2[:,:2] * box2[1:]
         
         box1_area = np.abs(np.linalg.det(determinate_1))
         box2_area = np.abs(np.linalg.det(determinate_2))
         # print(box1_area, box2_area) 
-        intersection = self.intersection_area()
         union = (box1_area + box2_area) - intersection
         # print(f"{intersection}\n---------------\n{union}")
 
         return intersection / union
 
-    def union(self):
-
+    def union(self, box1, box2):
+        
+        intersection = self.intersection_area(box1, box2)
         determinate_1 = np.ones((3,3), dtype=np.float32)
         determinate_2 = np.ones((3,3), dtype=np.float32)
-        determinate_1[:,:2] = determinate_1[:,:2] * self.label_box[1:]
-        determinate_2[:,:2] = determinate_2[:,:2] * self.pred_box[1:]
+        determinate_1[:,:2] = determinate_1[:,:2] * box1[1:]
+        determinate_2[:,:2] = determinate_2[:,:2] * box2[1:]
         
         box1_area = np.abs(np.linalg.det(determinate_1))
         box2_area = np.abs(np.linalg.det(determinate_2))
-        intersection = self.intersection_area()
         union = (box1_area + box2_area) - intersection
 
         return union
@@ -630,9 +628,9 @@ class bbox_worker:
 
         return c_box
 
-    def GIoU(self):
-        box1 = self.label_box.copy()
-        box2 = self.pred_box.copy()
+    def GIoU(self, box1, box2):
+        intersection = self.intersection_area(box1, box2)
+        IoU = self.IoU(box1, box2)
         box = []
         box.extend(box1)
         box.extend(box2)
@@ -652,7 +650,8 @@ class bbox_worker:
         C = np.ones((3, 3), dtype=np.float32)
         C[:,:2] = C[:,:2] * c_box[:-1]
         C = np.abs(np.linalg.det(C))
-        union = self.union()
+        union = self.union(box1, box2)
+        print(C)
 
-        return self.IoU() - np.abs(C / union) / C 
+        return IoU - np.abs(C / union) / C 
 

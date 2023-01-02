@@ -132,19 +132,37 @@ intersections = box_cutter.construct_intersection(label_corners, pred_corners)
 print(intersections.shape)
 
 # %%
-areas = box_cutter.calculate_iou(label_corners, pred_corners)
+iou = box_cutter.calculate_iou(label_corners, pred_corners)
 
 # %%
-print(f"Intersection Area: {areas.shape}\n{areas[0, 5, 6]}")
+print(f"IoU: {iou.shape}\n{iou[0, 5]}")
 
 # %%
-box = label_corners[0, 5, 8].numpy()
+print(label_corners[0,5,8], pred_corners[0,5,8])
+
+# %%
+giou = box_cutter.calculate_GIoU(label_corners, pred_corners)
+giou[0, 5]
+
+# %%
+worker = bbox_worker(labels[0,5,8], preds[0, 5, 8])
+
+# %%
+box1 = label_corners[0, 5, 8].numpy()
+box2 = pred_corners[0, 5, 8].numpy()
+worker.GIoU(box1, box2)
+
+# %%
+box1 = label_corners[0, 5, 8].numpy()
 print(box.shape)
 area = np.empty((4, 2), dtype=np.float32)
 for i in range(4):
     area[i] = np.abs(box[-1 + i] - box[i])
-area = np.sum(area, axis=0)
-area = area[0] * area[1]
+x2, y2 = area[0]
+x1, y1 = area[1]
+a = np.sqrt(x1**2 + y1**2)
+b = np.sqrt(x2**2 + y2**2)
+area = a * b
 print(area)
 
 
