@@ -12,7 +12,7 @@ from tensorflow.keras.utils import load_img
 from src.utils.funcs import init_COCO, process_img_annotations, rotate
 from src.utils.classes import CategoricalDataGen, bbox_worker
 from src.models.models import IoU, YOLOLoss
-from src.models.loss import BoundingBox_Processor
+from src.utils.box_cutter import BoundingBox_Processor
 
 
 
@@ -21,6 +21,7 @@ from src.models.loss import BoundingBox_Processor
 
 # %%
 # %autoreload 2
+# %aimport src.utils.box_cutter
 # %aimport src.utils.funcs
 # %aimport src.utils.classes
 # %aimport src.models
@@ -69,6 +70,22 @@ label_corners = label_corners[0]
 print(pred_corners.shape)
 
 # %%
+true_edges = box_cutter.get_edges(label_corners)
+pred_edges = box_cutter.get_edges(pred_corners)
+print(pred_edges.shape)
+
+# %%
+intersection_points = box_cutter.construct_intersection(label_corners, pred_corners, return_centered=False)
+
+# %%
+iou = box_cutter.calculate_iou(label_corners, pred_corners)
+print(f"IoU: {iou.shape}\n{iou[0, 5]}")
+
+# %%
+giou = box_cutter.calculate_GIoU(label_corners, pred_corners)
+giou[0, 5]
+
+# %%
 img = np.asarray(load_img("./data/images/test/screws_006.png", target_size=(384, 512)), dtype=np.float32)
 img = img / 255
 fig, ax = plt.subplots(figsize=(xdivs, ydivs))
@@ -95,6 +112,10 @@ ax.axis('off')
 plt.show()
 
 
+# %%
+test_box = label_corners[0, 5, 6]
+test_pred = pred_corners[0, 5, 6]
+test_inter = tf.constant(intersection_points[0, 5, 6, :6])
 
 # %%
 fig, ax = plt.subplots(figsize=(8,6))
@@ -107,211 +128,9 @@ ax.set(
         # xticklabels=np.linspace(0, 12, 13)
         )
 ax.grid(visible=True, zorder=0)
-# ax.add_patch(Polygon(boxes.label_box, fill=None, edgecolor='springgreen', lw=1, zorder=10))
-# ax.add_patch(Polygon(boxes.pred_box, fill=None, edgecolor='tomato', lw=1, zorder=10))
 ax.add_patch(Polygon(test_box, fill=None, edgecolor='tab:blue', lw=1, zorder=10))
 ax.add_patch(Polygon(test_pred, fill=None, edgecolor='gray', lw=1, zorder=10))
 ax.add_patch(Polygon(test_inter, facecolor='gray', edgecolor='gray', lw=1, alpha=.4, zorder=10))
-# if boxes.intersection:
-#     ax.add_patch(Polygon(boxes.intersection, edgecolor='tab:purple', zorder=10, alpha=.4))
-# ax.add_patch(Polygon(get_Gbbox(boxes), fill=None, edgecolor='black', lw=1.5, zorder=10, alpha=.6))
-
-# ax.scatter(i_x, i_y, marker='x', s=30, color='tab:purple')
 ax.axhline(0, -10, 10, lw=.5, color='black', linestyle='--')
 ax.axvline(0, -10, 10, lw=.5, color='black', linestyle='--')
-plt.show()
-
-
-
-# %%
-print(type(labels), type(preds))
-
-
-# %%
-intersections = box_cutter.construct_intersection(label_corners, pred_corners)
-print(intersections.shape)
-
-# %%
-iou = box_cutter.calculate_iou(label_corners, pred_corners)
-
-# %%
-print(f"IoU: {iou.shape}\n{iou[0, 5]}")
-
-# %%
-print(label_corners[0,5,8], pred_corners[0,5,8])
-
-# %%
-giou = box_cutter.calculate_GIoU(label_corners, pred_corners)
-giou[0, 5]
-
-# %%
-worker = bbox_worker(labels[0,5,8], preds[0, 5, 8])
-
-# %%
-box1 = label_corners[0, 5, 8].numpy()
-box2 = pred_corners[0, 5, 8].numpy()
-worker.GIoU(box1, box2)
-
-# %%
-box1 = label_corners[0, 5, 8].numpy()
-print(box.shape)
-area = np.empty((4, 2), dtype=np.float32)
-for i in range(4):
-    area[i] = np.abs(box[-1 + i] - box[i])
-x2, y2 = area[0]
-x1, y1 = area[1]
-a = np.sqrt(x1**2 + y1**2)
-b = np.sqrt(x2**2 + y2**2)
-area = a * b
-print(area)
-
-
-# %%
-true_edges = get_edges(label_corners)
-pred_edges = get_edges(pred_corners)
-print(pred_edges.shape)
-
-
-# %%
-label_1 = [4, 6, 1.5, 4, np.deg2rad(-13)]
-pred = [3.2, 5.63, 1.2, 3.6, np.deg2rad(-25)]
-boxes = bbox_worker(label_1, pred) 
-boxes.label_box
-
-# %%
-# print(boxes.intersection)
-test_label = label_corners[0, 5, 4]
-print(test_label)
-test_pred = pred_corners[0, 5, 4]
-print(test_pred)
-
-
-# %%
-fig, ax = plt.subplots(figsize=(8,6))
-ax.set(
-        xlim=[0, 512],
-        ylim=[0, 384],
-        xticks=list(range(0, 512,int(512/12))),
-        yticks=list(range(0, 384, int(384/9))),
-        # yticklabels=np.linspace(0, 9, 10),
-        # xticklabels=np.linspace(0, 12, 13)
-        )
-ax.grid(visible=True, zorder=0)
-ax.add_patch(Polygon(test_label.numpy(), fill=None, edgecolor='springgreen', lw=1, zorder=10))
-ax.add_patch(Polygon(test_pred.numpy(), fill=None, edgecolor='tomato', lw=1, zorder=10))
-# if boxes.intersection:
-#     ax.add_patch(Polygon(boxes.intersection, edgecolor='tab:purple', zorder=10, alpha=.4))
-# ax.add_patch(Polygon(get_Gbbox(boxes), fill=None, edgecolor='black', lw=1.5, zorder=10, alpha=.6))
-
-# ax.scatter(i_x, i_y, marker='x', s=30, color='tab:purple')
-ax.axhline(0, -10, 10, lw=.5, color='black', linestyle='--')
-ax.axvline(0, -10, 10, lw=.5, color='black', linestyle='--')
-plt.show()
-
-
-# %%
-def get_intersections(edge1, edge2):
-    edge_a = edge1[..., 2:3, :, :]
-    edge_b = edge2[..., 0:, :, :]
-    if self.debug:
-        print(f"edge_a shape: {edge_a.shape}")
-        print(f"edge_b shape: {edge_b.shape}")
-        print(f"edge_a points:\n{tf.squeeze(edge_a[0,5, 4, 0:])}")
-        print(f"edge_b points:\n{tf.squeeze(edge_b[0,5, 4, 0:])}")
-
-    x1 = edge_a[..., 0:1, 0:1]
-    y1 = edge_a[..., 0:1, 1:]
-    x2 = edge_a[..., 1:, 0:1]
-    y2 = edge_a[..., 1:, 1:]
-    if self.debug:
-        print(f"x1 shape: {x1.shape}")
-        print(f"y1 shape: {y1.shape}")
-        print(f"x1 value: {x1[0,5,4]}")
-        print(f"y1 value: {y1[0,5,4]}")
-        print(f"x2 value: {x2[0,5,4]}")
-        print(f"y2 value: {y2[0,5,4]}")
-
-    x3 = edge_b[..., 0:1, 0:1]
-    y3 = edge_b[..., 0:1, 1:]
-    x4 = edge_b[..., 1:, 0:1]
-    y4 = edge_b[..., 1:, 1:]
-    if self.debug:
-        print(f"x3 value: {x3[0,5,4]}")
-        print(f"y3 value: {y3[0,5,4]}")
-        print(f"x4 value: {x4[0,5,4]}")
-        print(f"y4 value: {y4[0,5,4]}")
-    
-    denom =  (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1)
-
-    print(f"denom shape: {denom.shape}")
-    print(f"denom:\n{tf.squeeze(denom[0, 5, 4], axis=[-2, -1])}")
-
-    ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denom
-
-    zeros = tf.fill(tf.shape(ua), 0.0)
-    ones = tf.fill(tf.shape(ua), 1.0)
-
-    hi_pass_a = tf.math.less_equal(ua, ones)
-    lo_pass_a = tf.math.greater_equal(ua, zeros)
-    mask_a = tf.logical_and(hi_pass_a, lo_pass_a)
-
-    ub = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / denom
-    hi_pass_b = tf.math.less_equal(ub, ones)
-    lo_pass_b = tf.math.greater_equal(ub, zeros)
-    mask_b = tf.logical_and(hi_pass_b, lo_pass_b)
-
-    mask = tf.logical_and(mask_a, mask_b)
-
-    if self.debug:
-        print(f"\nua value:       {tf.squeeze(ua[0, 5, 4], axis=[-2, -1])}")
-        print(f"hi_pass value:  {tf.squeeze(hi_pass_a[0, 5, 4], axis=[-2, -1])}")
-        print(f"lo_pass value:  {tf.squeeze(lo_pass_a[0, 5, 4], axis=[-2, -1])}")
-        print(f"\nmask_a value:   {tf.squeeze(mask_a[0, 5, 4], axis=[-2, -1])}")
-        print(f"\nub value:       {tf.squeeze(ub[0, 5, 4], axis=[-2, -1])}")
-        print(f"hi_pass value:  {tf.squeeze(hi_pass_b[0, 5, 4], axis=[-2, -1])}")
-        print(f"lo_pass value:  {tf.squeeze(lo_pass_b[0, 5, 4], axis=[-2, -1])}")
-        print(f"\nmask_b value:   {tf.squeeze(mask_b[0, 5, 4], axis=[-2, -1])}")
-        print(f"\nmask value:     {tf.squeeze(mask[0, 5, 4], axis=[-2])}")
-
-    
-    xnum = (x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)
-    ynum = (x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)
-    x_i = (xnum / denom)
-    y_i = (ynum / denom)
-    mask = tf.cast(tf.squeeze(mask, axis=[-1]), dtype=tf.float32)
-    intersections = tf.multiply(tf.squeeze(tf.stack([x_i, y_i], axis=-3), axis=[-2, -1]), mask)
-    if self.debug:
-        print(f"mask_reshape: {mask.shape}")
-        print(f"Intersection shape: {intersections.shape}")
-        print(f"Intersection Points:\n{intersections[0, 5, 4]}")
-
-
-
-
-get_intersections(true_edges, pred_edges)
-
-# %%
-value = np.array([[1, 1],
-                  [2, 2],
-                  [3, 3],
-                  [4, 4],
-                  [5, 5],
-                  [6, 6],
-                  [7, 7],
-                  [8, 8]])
-
-x = np.full((12, 9, 8, 2), value, dtype=np.float32)
-tensor = tf.constant(x)
-tile = np.random.randint(2, size=(12 * 9, 8))
-
-# %%
-r_tensor = tf.reshape(tensor, [12  * 9, 8, 2])
-tile_2d = tf.transpose(tf.reshape(tf.tile(tile, [1, 2]), [12 * 9, 2, 8]), perm=[0, 2, 1])
-mask = tf.sort(tile_2d, direction="DESCENDING", axis=-2)
-print(mask.shape)
-ma_tensor = tf.ragged.boolean_mask(r_tensor, tf.cast(mask, dtype=tf.bool))
-ma_tensor = tf.roll(ma_tensor, shift=-1, axis=-2)
-# tensor = tf.roll(tensor, shift=-1, axis=-2)
-print(ma_tensor.shape)
-print(ma_tensor[5:7].numpy())
 

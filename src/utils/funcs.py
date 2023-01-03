@@ -75,7 +75,6 @@ def make_masks(
                         center_line[i] = (x, y)
                     draw.line(center_line, fill="white", width=3)
                 first = False
-                print(crop_box.shape)
                 img_crops = np.append(img_crops, crop_box.reshape((1, 2, 2)), axis=0)
 
             crops.append(img_crops)

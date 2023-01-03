@@ -402,35 +402,6 @@ class BoundingBox_Processor:
 
         return result
 
-
-    
-    def clockwise_sort(self, point):
-        x, y = point - self.inter_center
-        # print(f"Point at ({x}, {y})\nhas arctan of {np.arctan(y/x):.4f}")
-        return np.arctan2(y, x)
-    
-    def IoU(self):
-
-        determinate_1 = np.ones((3,3), dtype=np.float32)
-        determinate_2 = np.ones((3,3), dtype=np.float32)
-        determinate_1[:,:2] = determinate_1[:,:2] * self.label_box[1:]
-        determinate_2[:,:2] = determinate_2[:,:2] * self.pred_box[1:]
-        
-        box1_area = np.abs(np.linalg.det(determinate_1))
-        box2_area = np.abs(np.linalg.det(determinate_2))
-        # print(box1_area, box2_area) 
-        intersection = self.intersection_area()
-        union = (box1_area + box2_area) - intersection
-        # print(f"{intersection}\n---------------\n{union}")
-
-        return intersection / union
-
-
-    def IoU(self, y_true, pred):
-        pass
-
-
-
     def _debug_get_intersections(self, edge1, edge2, level:int=1):
         self.debug = True
         edge_a = edge1[..., 0:1, :, :]
