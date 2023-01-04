@@ -9,6 +9,8 @@ import tensorflow as tf
 from tensorflow.keras.utils import load_img
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Rectangle
+from matplotlib.animation import FuncAnimation, HTMLWriter, PillowWriter
+from IPython.display import HTML
 
 from sklearn.cluster import KMeans
 
@@ -30,6 +32,24 @@ input_size = (1440, 1920)
 target_size = (512, 512)
 num_classes = 13
 
+def convert_points(b_x, output_size=(512, 384)):
+    adjX, adjY = output_size
+    adjustment = np.array([1920, 1440])
+    result = []
+    b_x = b_x / adjustment
+    b_x = tf.where(b_x > 0, b_x, 0).numpy()
+    b_x = tf.where(b_x < 1, b_x, 1).numpy()
+    box_tipped = np.sort(b_x.T, axis=-1)
+    box_tipped = box_tipped.T
+    max = box_tipped[-1:]
+    min = box_tipped[0:1]
+    w, h = np.squeeze(np.abs(np.diff(np.concatenate((max, min), axis=0).T, axis=-1)).T)
+    x, y = np.squeeze(min)
+    # result.append([y, x, h, w])  
+    return y, x, h, w
+
+# %%
+
 
 # %%
 annotations = []
@@ -43,35 +63,36 @@ for key in data.keys():
     img_data = train_data.lookup['img_data']
     boxes = train_data.lookup['annotations']
     for img in img_data:
+        print(img['file_name'])
         file_name = img['file_name']
         id = img['id']
         h = img['height']
         w = img['width']
         for idx in boxes:
             if idx['image_id'] == id:
-                _, bbox, _ = process_img_annotations(idx['bbox'])
-                category = idx['category_id']
-                adj_box = bbox / np.array([w, h])
-                bw, bh = np.abs(adj_box[0] - adj_box[1])
-                x, y = np.mean(adj_box, axis=0)
-                annotations.append((f"./data/yolo_v3/obj/{file_name[:-3]}.txt", f"{category} {x:.6f} {y:.6f} {bw:.6f} {bh:.6f}\n"))
+                bbox, _, _ = process_img_annotations(idx['bbox'])
+                y, x, h, w = convert_points(np.asarray(bbox, dtype=np.float32))
+                category = int(idx['category_id']) - 1
+                annotations.append((f"./data/yolo_v3/obj/{file_name[:-3]}txt", f"{category} {y:.6f} {x:.6f} {h:.6f} {w:.6f}\n"))
+                # print(annotations)
+
     # for img in img_data:
     #     with open(f"data/yolo_v3/{key}.txt", 'a') as file:
     #         file.write(f"data/obj/{img['file_name']}\n")
 
-    # count = 0
-    # for obj in annotations:
-    #     with open(f'{obj[0]}', 'a') as file:
-    #         file.write(obj[1])
-    #     count += 1
-    # print(f"Saved {count} files!")
+count = 0
+for obj in annotations:
+    with open(f'{obj[0]}', 'a') as file:
+        file.write(obj[1])
+    count += 1
+print(f"Saved {count} files!")
 
 
 # %%
 print(annotations[0])
-test_set = [x[1].split() for x in annotations[:16]]
-test_set = [[float(y) for y in x[1:]] for x in test_set]
-test_set[0]
+# test_set = [x[1].split() for x in annotations[:16]]
+# test_set = [[float(y) for y in x[1:]] for x in test_set]
+# test_set[0]
 
 # %%
 box_list = []
@@ -111,7 +132,7 @@ def convert_points(bboxes1, bboxes2, output_size=(512, 384)):
         min = box_tipped[0:1] * adjustment
         w, h = np.squeeze(np.abs(np.diff(np.concatenate((max, min), axis=0).T, axis=-1)).T)
         x, y = np.squeeze(min)
-        result.append([(y, x), h, w])  
+        result.append([y, x, h, w])  
 
     for item in bboxes2:
         u, v, a, b = item 
@@ -170,7 +191,10 @@ for idx in range(13):
     average = tf.reduce_sum(filter, axis=0) / tf.reduce_sum(mask, axis=0)
     centroid_locations.append(average.numpy())
 
-fig, ax = plt.subplots(figsize=(8, 6))
+
+# %%
+plt.close()
+fig, ax = plt.subplots(figsize=(4, 3))
 ax.set(
         xlim=[0, 512],
         ylim=[0, 384]
@@ -179,9 +203,11 @@ pick = np.random.choice
 color = ["tomato", "springgreen", "orange", "deepskyblue", "tab:purple"]
 knudge = 512 / 12
 start = np.array([knudge/2, knudge/2])
-for cell in range(12 * 9):
-    v, u = divmod(cell, 12)
-    bump = np.array([u * knudge, v*knudge]) 
+
+def animation(i):
+    ax.axis('off')
+    v, u = divmod(i, 12)
+    bump = np.array([u * knudge, v * knudge]) 
     x, y = start + bump
     ax.add_patch(Circle((x, y), 2, fill=True, facecolor='gray', alpha=.6))
     anchors = np.random.choice(range(0, 12, 1), 4)
@@ -191,12 +217,11 @@ for cell in range(12 * 9):
     #     _, _, w, h, a = box
         ax.add_patch(Rectangle((x-w/2, y-h/2), w, h, angle=a*180/np.pi, rotation_point="center", fill=None, lw=.5, edgecolor=pick(color)))
 ax.axis('off')
-plt.savefig(f"./uploads/anchor_box_ex{num:02d}.png")
-num += 1
-plt.show()
-
-# %%
-num = 0
+pillow = PillowWriter(fps=24)
+anim = FuncAnimation(fig, animation, frames=9 * 12, cache_frame_data=False)
+anim.save("./images/anchor_anim.gif", writer=pillow)
+HTML(anim.to_jshtml(fps=24))
+plt.close()
 
 # %%
 points = []
