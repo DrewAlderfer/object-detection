@@ -157,7 +157,7 @@ box prediction algorithm) that incorporated a box alignment.</p>
 
 The label format for this model ends up being structure like this:
 
-$ \large \text {Labels: } \begin{bmatrix} P(class)_{0} & \cdots & P(class)_{n} & P(obj)_{i} & x_{i} & y_{i} & w_{i} & h_{i} & \phi_{i} \end{bmatrix} $
+<img src="https://latex.codecogs.com/svg.image?\inline&space;\large&space;\text&space;{Labels:&space;}&space;\begin{bmatrix}&space;P(class)_{0}&space;&&space;\cdots&space;&&space;P(class)_{n}&space;&&space;P(obj)_{i}&space;&&space;x_{i}&space;&&space;y_{i}&space;&&space;w_{i}&space;&&space;h_{i}&space;&&space;\phi_{i}&space;\end{bmatrix}" title="https://latex.codecogs.com/svg.image?\inline \large \text {Labels: } \begin{bmatrix} P(class)_{0} & \cdots & P(class)_{n} & P(obj)_{i} & x_{i} & y_{i} & w_{i} & h_{i} & \phi_{i} \end{bmatrix}" />
 
 <p>Working through the complications with calculating IoU for rectangles without parallel orientations,
 finding points that fall inside arbitray convex polygons and calculating the area of a the
@@ -178,38 +178,21 @@ for taking a tensor of labels and one prediction and calculating any related val
 needed for the eventual implementation of the loss function.</p>
     
 ![illustration of intersection](./images/Presentation_Project_Outlineintersection_slide.png)
+<div style='display:block;margin-left:0;margin-right:auto;text-align: left; '>
+<img src="https://latex.codecogs.com/svg.image?\inline&space;\large&space;\text&space;{Area&space;of&space;Intersection:&space;}" title="https://latex.codecogs.com/svg.image?\inline \large \begin{align}\text {Area of Intersection: }\end{align}" />
+</div>
+
+<img src="https://latex.codecogs.com/svg.image?\inline&space;\large&space;\sum_{i=0}^{n}\left(&space;A_{n}&space;=&space;{\color{red}\pm}\dfrac{1}{2}&space;\begin{vmatrix}a_{1,1}&space;&&space;a_{1,&space;2}&space;&&space;1&space;\\a_{2,1}&space;&&space;a_{2,&space;2}&space;&&space;1&space;\\a_{3,1}&space;&&space;a_{3,&space;2}&space;&&space;1&space;\\\end{vmatrix}&space;&space;\right)" title="https://latex.codecogs.com/svg.image?\inline \begin{align}\large \sum_{i=0}^{n}\left( A_{n} = {\color{red}\pm}\dfrac{1}{2} \begin{vmatrix}a_{1,1} & a_{1, 2} & 1 \\a_{2,1} & a_{2, 2} & 1 \\a_{3,1} & a_{3, 2} & 1 \\\end{vmatrix} \right)\end{align}" />
+
 <p style='text-align: left; '>
-$\large \begin{align}\text {Area of Intersection: }\end{align} $
-</p>
-$$
-\begin{align}
-\large 
-\sum_{i=0}^{n}\left( A_{n} = {\color{red}\pm}\dfrac{1}{2} \begin{vmatrix}
-a_{1,1} & a_{1, 2} & 1 \\
-a_{2,1} & a_{2, 2} & 1 \\
-a_{3,1} & a_{3, 2} & 1 \\
-\end{vmatrix}  \right)
-\end{align}
-$$
-<p style='text-align: left; '>
-$
-\large \text {Calculating Union:}
-$
-$$
-\begin{align}
-\large
-Union = \left(Area_{label} + Area_{prediction} \right) - Intersection
-\end{align}
-$$
+<img src="https://latex.codecogs.com/svg.image?\inline&space;\large&space;\text&space;{Calculating&space;Union:}" title="https://latex.codecogs.com/svg.image?\inline \large \text {Calculating Union:}" />
+
+<img src="https://latex.codecogs.com/svg.image?\inline&space;\large&space;Union&space;=&space;\left(Area_{label}&space;&plus;&space;Area_{prediction}&space;\right)&space;-&space;Intersection" title="https://latex.codecogs.com/svg.image?\inline \large Union = \left(Area_{label} + Area_{prediction} \right) - Intersection" />
+
 </p>
 <p style='text-align: left; '>
-$
-\large \text {Intersection over Union (IoU):}
-$
-$$
-\large
-IoU = \dfrac{Intersection}{Union}
-$$
+<img src="https://latex.codecogs.com/svg.image?\inline&space;\large&space;\text&space;{Intersection&space;over&space;Union&space;(IoU):}" title="https://latex.codecogs.com/svg.image?\inline \large \text {Intersection over Union (IoU):}" />
+<img src="https://latex.codecogs.com/svg.image?\inline&space;\large&space;IoU&space;=&space;\dfrac{Intersection}{Union}" title="https://latex.codecogs.com/svg.image?\inline \large IoU = \dfrac{Intersection}{Union}" />
 </p>
 </br></br><p>All that to say. I had fun, but I did not finish before writing this README. I have finished the
 tensor operations necessary to get the GIoU and IoU from a set of labels and predictions, and I
