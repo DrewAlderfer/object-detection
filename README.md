@@ -242,3 +242,24 @@ have learned thus far to tackling the final stretch. The idosyncracies in the da
 most of my attempts at finding the solution with the straightest path to completion, but thanks to
 that process I feel that I have gained real experience and knowledge in an area of machine-learning
 that I am deeply interested in pursuing further.</p>
+
+```bash
+./
+├── data
+│   ├── images
+│   │   ├── test
+│   │   ├── train
+│   │   └── val
+│   └── yolo_v3
+│       └── obj
+├── images
+├── notebooks
+├── src
+│   ├── models
+│   │   └── __pycache__
+│   ├── __pycache__
+│   └── utils
+│       └── __pycache__
+└── uploads
+    └── images
+```
