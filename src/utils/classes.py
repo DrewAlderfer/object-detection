@@ -140,6 +140,7 @@ class CategoricalDataGen:
     def get_labels(self, 
                    divs:Tuple[int, int]=(6, 8), 
                    num_boxes:int=3, num_classes:int=13,
+                   normalized:bool=False,
                    sample_size:Union[int, None]=None,
                    input_size:Tuple[int, int]=(1440, 1920),
                    save:bool=False, 
@@ -164,13 +165,13 @@ class CategoricalDataGen:
             # [1, 2, 3, ... 13, Pc, x1, y1, w, h, phi]
             img_labels = np.zeros((divs[1], divs[0], num_classes + 6), dtype=np.float32) 
             for entry in annot:
-                # print(entry)
-                y1, x1, w, h, phi = self.translate_points(entry['bbox'], input_size)
+                y1, x1, h, w, phi = self.translate_points(entry['bbox'], input_size)
                 x_cell = int(divmod(x1, self.target_size[1]/divs[1])[0])
                 y_cell = int(divmod(y1, self.target_size[0]/divs[0])[0])
+
                 cat = entry['category_id']
                 label_vec = np.zeros((num_classes + 6), dtype=np.float32)
-                label_vec[13:] = 1, x1, y1, h, w, phi
+                label_vec[13:] = 1, x1, y1, w, h, phi
                 label_vec[cat] = 1 
                 img_labels[x_cell, y_cell, :] = label_vec
 
@@ -197,12 +198,27 @@ class CategoricalDataGen:
         row = row * self.target_size[0] / input_size[0]
         width = width * self.target_size[1] / input_size[1]
         height = height * self.target_size[0] / input_size[0]
+        phi = 2 * np.pi - phi 
         return row, col, width, height, phi
         
-        
-        
+    def normalize_points(self, entry:list, input_size:Tuple[int, int]):
+        """
+        process individual annotations from the MVTec Screws Dataset. Takes the 'bbox' list and
+        returns the adjusted coordinates of the bounding box as a tuple with three lists of points.
 
-
+        returns:
+            boundingbox_corners, crop_corners(top right, and left points), center_line([x1, y1], [x2, y2])
+        """
+        # grab bbox info
+        row, col, width, height, phi = entry
+        # -pi to pi -> 0 to 2*pi
+        # initial bounds
+        col = col / input_size[1]
+        row = row / input_size[0]
+        width = width / input_size[1]
+        height = height / input_size[1]
+        phi = -1 * (phi - np.pi)
+        return row, col, width, height, phi
 
     def crop_dataset(self, save_to:Union[os.PathLike, str], sample_size:Union[int, None]=None, **kwargs):
 

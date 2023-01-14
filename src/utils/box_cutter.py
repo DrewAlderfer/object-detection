@@ -92,52 +92,57 @@ class BoundingBox_Processor:
         # points. Also, consider just return a tuple of the (perimeter_points, center_point) rather
         # than packing the center into the last dim of the tensor.
         return result
-    def calculate_GIoU(self, box1, box2):
+
+    def calculate_GIoU(self, labels, predictions):
         """
         Calculate the GIoU of the two bounding boxes.
         """        
         # Create a tensor that represents the min and max x/y values from both boxes
         # combine the box1 and box2 tensors?
+        box1 = self.get_corners(labels)[0]
+        box2 = self.get_corners(predictions)
+        result = []
+        for box in box2:
+            # box.shape = (batch, xdiv, ydiv, 4, 2) 
+            big_box = tf.concat([box1, box], axis=-2)
 
-        # box.shape = (batch, xdiv, ydiv, 4, 2) 
-        big_box = tf.concat([box1, box2], axis=-2)
+            big_box = tf.transpose(big_box, perm=[0, 1, 2, 4, 3])
+            gMax = tf.sort(big_box, axis=-1, direction="DESCENDING")[..., :, 0:1]
+            gMin = tf.sort(big_box, axis=-1)[..., :, 0:1]
 
-        big_box = tf.transpose(big_box, perm=[0, 1, 2, 4, 3])
-        gMax = tf.sort(big_box, axis=-1, direction="DESCENDING")[..., :, 0:1]
-        gMin = tf.sort(big_box, axis=-1)[..., :, 0:1]
+            gMax = tf.transpose(gMax, perm=[0, 1, 2, 4, 3])
+            gMin = tf.transpose(gMin, perm=[0, 1, 2, 4, 3])
 
-        gMax = tf.transpose(gMax, perm=[0, 1, 2, 4, 3])
-        gMin = tf.transpose(gMin, perm=[0, 1, 2, 4, 3])
+            C = tf.squeeze((gMax[..., 0:1] - gMin[..., 0:1]) * (gMax[..., 1:] - gMin[..., 1:]), axis=[-2, -1])
+            
+            intersection_points = self.construct_intersection(box1, box, return_centered=True)
+            points = intersection_points[..., :8, :]
+            center = intersection_points[..., 8:, :]
 
-        C = tf.squeeze((gMax[..., 0:1] - gMin[..., 0:1]) * (gMax[..., 1:] - gMin[..., 1:]), axis=[-2, -1])
-        print(f"C shape {C.shape}")
-        
-        intersection_points = self.construct_intersection(box1, box2, return_centered=True)
-        points = intersection_points[..., :8, :]
-        center = intersection_points[..., 8:, :]
+            intersection = self.intersection_area(points)
 
-        intersection = self.intersection_area(points)
+            union = self.get_union(box1, box, intersection)
 
-        union = self.get_union(box1, box2, intersection)
+            result.append((intersection/union)  - (tf.abs(C / union)) / tf.abs(C))
+        return np.stack(result, axis=-1)
 
-        print(f"Union: {union.shape}")
-        print(f"Intersection: {intersection.shape}")
-
-        return (intersection/union) - (tf.abs(C / union) / C)
-
-
-    def calculate_iou(self, box1, box2):
+    def calculate_iou(self, labels, predictions):
         """
         Calculate the IoU (Intersection over Union) of two boxes.
         """
-        intersection_points = self.construct_intersection(box1, box2, return_centered=True)
-        points = intersection_points[..., :8, :]
-        center = intersection_points[..., 8:, :]
-        intersection = self.intersection_area(points)
-         
-        union = self.get_union(box1, box2, intersection)
+        box1 = self.get_corners(labels)[0]
+        box2 = self.get_corners(predictions)
+        result = []
+        for box in box2:
+            intersection_points = self.construct_intersection(box1, box, return_centered=True)
+            points = intersection_points[..., :8, :]
+            center = intersection_points[..., 8:, :]
+            intersection = self.intersection_area(points)
+             
+            union = self.get_union(box1, box, intersection)
+            result.append(intersection / union)
 
-        return intersection / union       
+        return np.stack(result, axis=-1)
 
     def get_union(self, box1, box2, intersection):
         # box.shape = (batch, xdiv, ydiv, 4, 2) 
@@ -205,6 +210,7 @@ class BoundingBox_Processor:
         Calculates the points of edge intersection between two parallelograms by roling one tensor of
         corner points over the other to create edges.
         """
+        print("Test")
         box1_edges = self.get_edges(box1)
         box2_edges = self.get_edges(box2) 
         edge_intersections = None
@@ -246,17 +252,11 @@ class BoundingBox_Processor:
             y[..., 1:-1] = tf.multiply(tf.subtract(box_cy, box_w/2), box_exists)
 
             # Pull the angle out into its own tensor
-            phi = -1 * (box_vector[..., -1:] - np.pi) * box_exists
+            phi = box_vector[..., -1:] * box_exists
 
             # Zip up (stack) the x / y coordinates so that we have (x, y) pairs
             box_points = tf.stack([x, y], axis=-1)
             box_center = tf.stack([box_cx, box_cy], axis=-1)
-
-            if self.debug:
-                print(f"box_exists shape: {box_exists.shape}")
-                print(f"box_vector shape: {box_vector.shape}")
-                print(f"box_vecotr:\n{box_vector[0, 5]}")
-
 
             # Rotate the box points to the correct orientation around their center
             box_processed = self.rotate_box_points(box_points, box_center, phi)
@@ -317,7 +317,7 @@ class BoundingBox_Processor:
         """
         Takes two edges and returns the point of intersection between them if one exists.
         """
-        self.debug = True
+        print("working")
         edge_a = edge1[..., 0:1, :, :]
         edge_b = edge2[..., 0:, :, :]
 
@@ -331,6 +331,15 @@ class BoundingBox_Processor:
         x4 = edge_b[..., 1:, 0:1]
         y4 = edge_b[..., 1:, 1:]
        
+        print(f"x1: {x1.shape}")
+        print(f"y1: {y1.shape}")
+        print(f"x2: {x2.shape}")
+        print(f"y2: {y2.shape}")
+        print(f"x3: {x3.shape}")
+        print(f"y3: {y3.shape}")
+        print(f"x4: {x4.shape}")
+        print(f"y4: {y4.shape}")
+
         # this is kind of like taking the area of a plane created between the two edges and then
         # subtracting them. If it equals zero then the edges are colinear.
         denom =  (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1)
@@ -362,6 +371,8 @@ class BoundingBox_Processor:
         # here I am using the mask to multiply any intersections that didn't fall along the segments
         # by zero and all the ones that did by one.
         mask = tf.cast(tf.squeeze(mask, axis=[-1]), dtype=tf.float32)
+        print(f"mask: {type(mask)} {mask.shape}")
+        print(f"squeeze: {tf.squeeze(tf.stack([x_i, y_i], axis=-3), axis=[-2, -1]).shape}")
         intersections = tf.multiply(tf.squeeze(tf.stack([x_i, y_i], axis=-3), axis=[-2, -1]), mask)
 
         return intersections
@@ -383,7 +394,6 @@ class BoundingBox_Processor:
         return inner_points
 
     def is_inside(self, corners, box_edges):
-
         x = corners[..., 0:1, 0:1]
         y = corners[..., 0:1, 1:]
 
@@ -398,7 +408,7 @@ class BoundingBox_Processor:
         right = tf.less(dir, 0)
         check = tf.cast(tf.reduce_all(tf.logical_not(left, right), axis=-2), dtype=tf.float32)
         result = tf.squeeze(corners[..., 0:1, :], axis=-2) * check
-        result = tf.reshape(result, [60, 12, 9, 1, 2])
+        result = tf.reshape(result, corners.shape[:-2] + (1, 2))
 
         return result
 

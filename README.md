@@ -191,7 +191,7 @@ needed for the eventual implementation of the loss function.</p>
 </p>
 <p style='text-align: left; '>
 <img src="https://latex.codecogs.com/svg.image?\inline&space;\large&space;{\color{Red}&space;\large&space;\text&space;{Intersection&space;over&space;Union&space;(IoU):}&space;}&space;" title="https://latex.codecogs.com/svg.image?\inline \large {\color{Red} \large \text {Intersection over Union (IoU):} } " />
-<img src="https://latex.codecogs.com/svg.image?\inline&space;\large&space;{\color{Red}&space;\large&space;IoU&space;=&space;\dfrac{Intersection}{Union}}&space;" title="https://latex.codecogs.com/svg.image?\inline \large {\color{Red} \large IoU = \dfrac{Intersection}{Union}} " />
+<img src="https://latex.codecogs.com/svg.image?\inline&space;\large&space;\bg{white}{\color{Emerald}\large&space;IoU&space;=&space;\dfrac{Intersection}{Union}&space;}" title="https://latex.codecogs.com/svg.image?\inline \large \bg{white}{\color{Emerald}\large IoU = \dfrac{Intersection}{Union} }" />
 </p>
 </br></br><p>All that to say. I had fun, but I did not finish before writing this README. I have finished the
 tensor operations necessary to get the GIoU and IoU from a set of labels and predictions, and I
