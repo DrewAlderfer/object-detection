@@ -184,7 +184,7 @@ class BoundingBox_Processor:
             # This fill tensor will be used to insert the first point from the list after the last point
             triangle_fill = tf.stack([triangle[..., 0, :], static_matrix[..., 0, :]], axis=-2)
 
-            # Here I am using the mask to determine to splice the fill values into the point tensor
+            # Here I am using the mask to splice the fill values into the point tensor
             # at the correct location so that as the rolling tensor comes to the last point it will
             # wrap back to the first. After the the determinant of each triangle matrix should reutrn
             # zero because there can be no more than one point (and the center) in each.
@@ -331,6 +331,8 @@ class BoundingBox_Processor:
         x4 = edge_b[..., 1:, 0:1]
         y4 = edge_b[..., 1:, 1:]
        
+        print(f"edge_a: {edge_a.shape}")
+        print(f"edge_b: {edge_b.shape}")
         print(f"x1: {x1.shape}")
         print(f"y1: {y1.shape}")
         print(f"x2: {x2.shape}")

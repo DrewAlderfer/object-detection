@@ -68,7 +68,7 @@ class LabelWorker:
 
         img_ids = [(x['id'], x['file_name']) for x in img_data]
         coco = self.lookup['coco']
-        labels = np.empty((0, xdivs * ydivs, num_classes + 6), dtype=np.float32)
+        labels = np.empty((0, 18, num_classes + 6), dtype=np.float32)
         for id, file_name in img_ids:
             # print(f"searching image: {file_name}")
             annot = coco.getAnnIds(id)
@@ -89,7 +89,7 @@ class LabelWorker:
 
             labels = np.concatenate((labels, img_labels), axis=0)
 
-        return labels.reshape((labels.shape[0],) + (xdivs, ydivs, num_classes + 6))
+        return labels.reshape((labels.shape[0],) + (18, num_classes + 6))
 
     def translate_points(self, entry:list):
         """

@@ -2,6 +2,7 @@ from typing import Union, Tuple, List
 from pathlib import Path
 import pprint as pp
 from numpy.typing import ArrayLike, NDArray
+from pandas.core.window import rolling
 import tensorflow as tf
 from sklearn.cluster import KMeans
 
@@ -11,7 +12,11 @@ from PIL import Image, ImageDraw, ImageFilter
 from tensorflow.keras.utils import load_img
 
 
-def generate_anchors(labels:NDArray[np.float32], boxes_per_cell:int=3, **kwargs):
+def generate_anchors(labels:NDArray[np.float32],
+                     boxes_per_cell:int=3,
+                     xdivs:int=12,
+                     ydivs:int=9, 
+                     **kwargs):
     """
     Function:
         Generates anchors box initialization values from a set of training labels.
@@ -24,11 +29,13 @@ def generate_anchors(labels:NDArray[np.float32], boxes_per_cell:int=3, **kwargs)
     Returns:
         An array of initial values for the prediction bounding boxes.
     """
+    rowcount = np.array(labels.sum(-1) != 0).sum(-1)
+    max_obj = np.max(rowcount)
     # flatten labels
     target_size = np.asarray((512, 384), dtype=np.float32)
     input_shape = labels.shape
-    batch, xdivs, ydivs, _ = input_shape
-    box_labels = tf.reshape(labels, [batch * xdivs * ydivs, 19])[..., 14:].numpy()
+    batch, max_obj, _ = input_shape
+    box_labels = tf.reshape(labels, [batch * max_obj, 19])[..., 14:].numpy()
     box_labels[:, 0:1] = 0 
     box_labels[:, 1:2] = 0 
     # mask no object
@@ -374,9 +381,9 @@ def get_corners(box_vectors:NDArray[np.float32],
     # Subtract the center point from each point in the corners. This centers the points around zero
     # so that we can rotate them around their local center point.
     scale = np.array([img_width, img_height])
-    corner_points = np.stack([x, y], axis=-1) * scale
-    center_point = np.stack([cx, cy], axis=-1) * scale
-    centered = np.subtract(corner_points, center_point) 
+    corner_points = tf.stack([x, y], axis=-1) * scale
+    center_point = tf.stack([cx, cy], axis=-1) * scale
+    centered = tf.subtract(corner_points, center_point) 
 
     # Set up the rotation matrix tensor
     cos, sin = np.cos(phi), np.sin(phi)
@@ -387,7 +394,7 @@ def get_corners(box_vectors:NDArray[np.float32],
     r_idx = tuple(range(len(R.shape)))
     R = np.transpose(R, r_idx[2:] + r_idx[0:2])
     # Return the points with the rotation applied and then the center point added back in.
-    return np.add(np.matmul(centered, R), center_point)
+    return tf.add(tf.matmul(centered, R), center_point)
 
 def stack_anchors(anchors:NDArray[np.float32]) -> NDArray:
     """
@@ -408,13 +415,16 @@ def stack_anchors(anchors:NDArray[np.float32]) -> NDArray:
         batch, xdivs, ydivs, units = anchors.shape
         anchors = anchors.reshape((batch, xdivs * ydivs,) + (units,))
     else:
+        batch = 1
         xdivs, ydivs, units = anchors.shape
         anchors = anchors.reshape((xdivs * ydivs,) + (units,))
-    anchor_box1 = anchors[..., 14:19]
-    anchor_box2 = anchors[..., 20:25]
-    anchor_box3 = anchors[..., 26:]
+    size = xdivs * ydivs
+    num_boxes = int((anchors.shape[-1] - 13) / 6)
+    result = np.reshape(anchors[..., 13:], (batch, size, num_boxes * 6))
+    result = np.expand_dims(result.reshape(batch, size, num_boxes, 6), axis=-2)
+    result = np.reshape(np.transpose(np.full(result.shape[:-2] + (3, result.shape[-1]), result), (0, 2, 1, 3, 4))[..., 0, 1:], (batch, size * num_boxes, 5))
 
-    return np.concatenate([anchor_box1, anchor_box2, anchor_box3], axis=-2)
+    return result
 
 def calulate_grid_cell(label_vectors, grid_dim):
     x, y = label_vectors[..., 14], label_vectors[..., 15]
@@ -425,18 +435,36 @@ def calulate_grid_cell(label_vectors, grid_dim):
     
 def get_edges(bbox_tensor:Union[tf.Tensor, NDArray]):
     z = tf.roll(bbox_tensor, shift=-1, axis=-2)
-    t = tf.stack([bbox_tensor, z], axis=-2)
-    return t
+    return tf.stack([bbox_tensor, z], axis=-2)
+
+def stretch_tensor(box_edges):
+    return tf.expand_dims(box_edges, axis=1)
+
+def pump_tensor(box_edges, num_cells:int=108, num_pumps:int=3):
+    """
+    This function takes a bounding box edge tensor (h, grid_x * grid_y, 4, 2) and returns a 
+    'pumped-up' version of it to be 'rolled' against another tensor for calculating intersections.
+    
+    Returns:
+        NDArray with shape (B, M, 4, 2, 2)
+    """
+    batch, num_boxes = box_edges.shape[0:2]
+    end = box_edges.shape[2:]
+    input = box_edges
+    # for _ in range(num_pumps - 1):
+    #     box_edges = tf.concat([box_edges, input], axis=1)
+    step1 = np.expand_dims(box_edges, axis=2)
+    step2 = np.full((batch, num_boxes, num_cells * num_pumps) + end, step1)
+    return step2
 
 def rolling_intersection(box1, box2):
     """
+    DEPRECATED:
     Calculates the points of edge intersection between two parallelograms by roling one tensor of
     corner points over the other to create edges.
     """
-    # box1_edges = get_edges(box1)
-    # box2_edges = get_edges(box2) 
-    box1_edges = box1
-    box2_edges = box2
+    box1_edges = pump_tensor(box1, **kwargs)
+    box2_edges = stretch_tensor(box2)
     edge_intersections = None
     for i in range(4):
         if i != 0:
@@ -447,19 +475,36 @@ def rolling_intersection(box1, box2):
             continue
         edge_intersections = get_intersections(box1_edges, box2_edges)
         box1_edges = tf.roll(box1_edges, shift=-1, axis=-3)
-    return edge_intersections, box1_edges, box2_edges
+    return edge_intersections
+
+def find_intersection_points(box1, box2, **kwargs):
+    """
+    Parameters:
+        Takes two tensors with the edges of label and anchor bounding boxes.
+
+    Returns: 
+        a tensor containing the intersection points of each label bounding box with each anchor
+        box.
+    """
+    box1_edges = pump_tensor(box1, **kwargs)
+    box2_edges = stretch_tensor(box2)
+    batch, box_num, anchor_num = box1_edges.shape[:3]
+    # box1_edges = tf.constant(box1_edges.shape[:4] + (4,) + box1_edges.shape[-2:], tf.expand_dims(box1_edges, axis=-3))
+    box1_edges = tf.broadcast_to(tf.expand_dims(box1_edges, axis=-3), shape=box1_edges.shape[:4] + (4,) + box1_edges.shape[-2:])
+    box2_edges = tf.expand_dims(box2_edges, axis=-4)
+
+    return tf.reshape(get_intersections(box1_edges, box2_edges), [batch, box_num, anchor_num, 16, 2])
 
 def get_intersections(box1_edge, box2_edge):
     """
-    Takes two edges and returns the point of intersection between them if one exists.
-    """
-    # print(f"input1: {box1_edge.shape}")
-    # print(f"input2: {box2_edge.shape}")
-    edge_a = box1_edge[..., 0:1, :, :]
-    edge_b = box2_edge[..., :108, :, :, :]
-    # print(f"edge_a: {edge_a.shape}")
-    # print(f"edge_b: {edge_b.shape}")
+    calculates the edge intersections between two sets of bounding boxes. 
 
+    Returns:
+        tf.Tensor with a list of intersections (or zeros for no intersection) between each edge, of
+        the two boxes.
+    """
+    edge_a = box1_edge[..., 0:1, :, :]
+    edge_b = box2_edge[..., :, :, :]
     x1 = edge_a[..., 0:1, 0:1]
     y1 = edge_a[..., 0:1, 1:]
     x2 = edge_a[..., 1:, 0:1]
@@ -470,17 +515,6 @@ def get_intersections(box1_edge, box2_edge):
     x4 = edge_b[..., 1:, 0:1]
     y4 = edge_b[..., 1:, 1:]
 
-    # print(f"x1, y1: {x1[0, 0, 0, 0, 0, 0]}, {y1[0, 0, 0, 0, 0, 0]}")
-    # print(f"x2, y2: {x2[0, 0, 0, 0, 0, 0]}, {y2[0, 0, 0, 0, 0, 0]}")
-    # print(f"box:\n{edge_b[0, 0, 0]}")
-    # print(f"y1: {y1.shape}")
-    # print(f"x2: {x2.shape}")
-    # print(f"y2: {y2.shape}")
-    # print(f"x3: {x3[0, 0, 0]}")
-    # print(f"y3: {y3.shape}")
-    # print(f"x4: {x4.shape}")
-    # print(f"y4: {y4.shape}")
-   
     # this is kind of like taking the area of a plane created between the two edges and then
     # subtracting them. If it equals zero then the edges are colinear.
     denom =  (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1)
@@ -491,37 +525,180 @@ def get_intersections(box1_edge, box2_edge):
     ub = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / denom
     mask_a = tf.cast(tf.math.logical_and(tf.greater(ua, 0), tf.less(ua, 1)), dtype=tf.bool)
     mask_b = tf.cast(tf.math.logical_and(tf.greater(ub, 0), tf.less(ub, 1)), dtype=tf.bool)
-    mask = tf.logical_and(mask_a, mask_b)
-    print(f"mask:\n{mask[0, 2, 3::9]}")
-    # zeros = tf.fill(tf.shape(ua), 0.0)
-    # ones = tf.fill(tf.shape(ua), 1.0)
-    print(f"ua:\n {ua[0, 2, 3::9]}")
-    print(f"ub:\n {ub[0, 2, 3::9]}")
-
-    # hi_pass_a = tf.math.less_equal(ua, ones)
-    # lo_pass_a = tf.math.greater_equal(ua, zeros)
-    # mask_a = tf.logical_and(hi_pass_a, lo_pass_a)
-
-    # ub = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / denom
-    # hi_pass_b = tf.math.less_equal(ub, ones)
-    # lo_pass_b = tf.math.greater_equal(ub, zeros)
-    # mask_b = tf.logical_and(hi_pass_b, lo_pass_b)
-
-    # mask = tf.logical_and(mask_a, mask_b)
+    
+    # Combine the masks and change them to floats for removing non-intersections from the result.
+    mask = tf.cast(tf.squeeze(tf.logical_and(mask_a, mask_b), axis=[-1]), dtype=tf.float32)
 
     # This actually just says where the intersection is 
     xnum = (x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)
     ynum = (x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)
-
-    x_i = np.asarray((xnum / denom), dtype=np.float32)
-    y_i = np.asarray((ynum / denom), dtype=np.float32)
-    print(f"x_i:{type(x_i)} {x_i[0,0,0]}") 
-    print(f"y_i:{type(y_i)} {y_i[0,0,0]}") 
-    # here I am using the mask to multiply any intersections that didn't fall along the segments
+    x_i = tf.math.divide_no_nan(xnum, denom)
+    y_i = tf.math.divide_no_nan(ynum, denom)
+    # Finish by using the mask to multiply any intersections that didn't fall along the segments
     # by zero and all the ones that did by one.
-    mask = tf.cast(tf.squeeze(mask, axis=[-1]), dtype=tf.float32)
-    # print(f"mask: {type(mask)} {mask.shape}")
-    # print(f"squeeze: {tf.squeeze(tf.stack([x_i, y_i], axis=-3), axis=[-2, -1]).shape}")
-    intersections = tf.multiply(tf.squeeze(tf.stack([x_i, y_i], axis=-3), axis=[-2, -1]), mask)
+    return tf.multiply(tf.squeeze(tf.stack([x_i, y_i], axis=-3), axis=[-2, -1]), mask)
 
-    return intersections
+def construct_intersection_vertices(labels, anchors, xdivs:int=12, ydivs:int=9, **kwargs):
+    """
+    This function organizes the process of finding all points of the intersection between bounding
+    boxes from the label set and all boxes from the anchor box set.
+
+    Returns:
+        A tensor with shape (B, M, M * 3, 24, 2)
+
+    TO DO:
+        Generalize all of these functions a little more. Instead of using for loops you can probably
+        just "pump" the tensors up like you are when comparing a set of labels vs. anchors.
+
+        So you would just concat the labels from (x, 108, 108, 4, 2) into (x, 108, 324, 4, 2). Just
+        'drop' it on itself for each anchor box.
+    """
+    pumps = anchors.shape[1] // (xdivs * ydivs)
+    label_corners, anchor_corners = get_corners(labels), get_corners(anchors)
+    label_edges, anchor_edges = get_edges(label_corners), get_edges(anchor_corners)
+    inner_points = find_inner_points([label_corners, label_edges], [anchor_corners, anchor_edges], num_pumps=pumps)
+    box_exists = tf.reshape(labels[..., 13:14], labels.shape[:-1] + (1, 1, 1))
+    print(f"box_exists:   {box_exists.shape}")
+    print(f"inner_points: {inner_points.shape}")
+    inner_points = inner_points * box_exists
+    print(f"inner_points: {inner_points[0, 16, 0]}")
+
+    intersection_points = find_intersection_points(label_edges, anchor_edges, **kwargs)
+    return  tf.concat([intersection_points, inner_points], axis=-2)
+
+def find_inner_points(label:list, anchors:list, **kwargs):
+    """
+    Takes a set of bounding box corners and the edges from a rectangle and returns the corner point
+    if it is inside the egdes of the shape.
+    Parameters:
+        corners: 
+            Bound Box Corners points Tensor with shape: (B, M) + (4, 2)
+        edges:
+            Bounding Box edges Tensor with shape:       (B, M) + (4, 2, 2)
+
+    Returns:
+        tf.Tensor object of shape (B, M, M) + (4, 2)
+    """
+    label_corners, label_edges = label[0], label[1]
+    label_corners = pump_tensor(label_corners, **kwargs)
+    label_corners = tf.broadcast_to(tf.expand_dims(label_corners, axis=-2), 
+                                    shape=label_corners.shape[:-1] + (4, 2))
+    label_edges = pump_tensor(label_edges, **kwargs)
+    label_edges = tf.expand_dims(label_edges, axis=-4)
+
+    anchor_corners, anchor_edges = anchors[0], anchors[1]
+    anchor_edges = tf.expand_dims(anchor_edges, axis=1)
+    anchor_edges = tf.expand_dims(anchor_edges, axis=-4)
+    anchor_corners = tf.expand_dims(anchor_corners, axis=1)
+    anchor_corners = tf.broadcast_to(tf.expand_dims(anchor_corners, axis=-2),
+                                     shape=anchor_corners.shape[:-1] + (4, 2))
+
+    return tf.concat([is_inside(label_corners, anchor_edges), 
+                      is_inside(anchor_corners, label_edges)], axis=-2)
+
+def is_inside(corners, box_edges):
+    """
+    Determines whether a point falls inside the edges of a convex shape by determining which side
+    of each edge the point falls along moving clockwise along the edges.
+    
+    Returns:
+        tf.Tensor object containing points that are fall inside the shape, and zeros out all points
+        that do not.
+    """
+    # Gets the x, y coordinates for the first corner point in the each corner set of the tensor.
+    x = corners[..., 0:1, 0:1]
+    y = corners[..., 0:1, 1:]
+    # Gets the start and stop coordinates for each edge of the shape.
+    x_i = box_edges[..., 0:, 0:1, 0]
+    y_i = box_edges[..., 0:, 0:1, 1]
+    x_j = box_edges[..., 0:, 1:, 0]
+    y_j = box_edges[..., 0:, 1:, 1]
+    # TO DO:
+    # A lot of these point comparison equations seem to be find the difference in the area between
+    # two sections of a shape. You should draw this out step by step to understand better what this
+    # is actually calculating.
+    #
+    # This determines which side of the line the point is on moving along the edges clockwise.
+    dir = (y - y_i) * (x_j - x_i) - (x - x_i) * (y_j - y_i)
+    left = tf.greater(dir, 0)
+    right = tf.less(dir, 0)
+
+    # This returns 1 if the point is on the same side of all the edges; 0 if it is not.
+    check = tf.cast(tf.reduce_all(tf.logical_not(left, right), axis=-2), dtype=tf.float32)
+    # Zero out the points not inside the shape.
+    return tf.cast(tf.squeeze(corners[..., 0:1, :], axis=-2), dtype=tf.float32) * check
+
+def intersection_area(intersection_points):
+    """
+    Function that takes a set of intersection points and returns a set of the areas.
+    """
+    nonzero = tf.cast(intersection_points > 0, dtype=tf.float32)
+    mask = tf.cast(intersection_points > 0, dtype=tf.bool)
+
+    denomenator = tf.reduce_sum(nonzero, axis=-2)
+    center = tf.expand_dims(tf.reduce_sum(intersection_points, axis=-2) / denomenator, axis=-2)
+    center_adj_points = tf.where(mask, 
+                                 intersection_points - center,
+                                 nonzero)
+    # Get the angles of each point in the intersection to the center point of the intersection shape.
+    point_angle = tf.where(mask, tf.math.atan2(center_adj_points[..., :, 1:],
+                                               center_adj_points[..., :, 0:1]) + np.pi,
+                           nonzero)
+    # order the points by their angle. The transpose here was necessary reordering the points. So
+    # for a few steps the x and y values are not paired in the last axis of the tensor but remain
+    # linked by their shared index in the ordering.
+    point_indices = tf.argsort(tf.transpose(point_angle, perm=[0, 1, 2, 4, 3]), direction="DESCENDING", axis=-1)
+    # just transposing the points to match the ordered indexes
+    points_T = tf.transpose(intersection_points, [0, 1, 2, 4, 3])
+    """
+    Create a template to double up the point_order indices. This is so that when we create gather
+    the intersection points into a tensor sorted by the angle of the points to the center point
+    it will insert a copy of each point right below it's ordered spot. This is neccessary because
+    for creating the full set of points in the edges of our triangles.
+    """
+    idx_template = tf.broadcast_to(tf.range(point_indices.shape[-1]), shape=point_indices.shape)
+    # this creates the doubled set of ordered indexes
+    point_order = tf.gather(point_indices, tf.sort(tf.concat([idx_template, idx_template], axis=-1), axis=-1), batch_dims=-1)
+    # this gathers the point into a tensor ordered by their angle to the center point.
+    edge_points = tf.transpose(tf.gather(points_T, point_order, batch_dims=-1)[..., :16], perm=[0, 1, 2, 4, 3])
+    # this rolls the non-zero values one step. This sets up the tensor to be easily split into the
+    # outer edge of the triangle making up the intersection shape.
+    edge_points = tf.where(edge_points > 0, tf.roll(edge_points, shift=-1, axis=-2), 0)
+    """
+    The next few steps function as follows:
+        - Find the index of the first [0, 0] point in each set of intersection points.
+            - after rolling the point axis of the tensor this index is the last point of our edges
+        - create a tensor that just represents the indexes for each x, y value in our tensor
+        - create a tensor that is just the first point of every x, y set.
+        - compare the last point index with the full index set and where they match insert the first
+          point from each set.
+
+    Now we have a full ordered set of edges for each intersection. These will be combined with the
+    center point from before to create a set of traingles from which we can calculate the area of
+    the intersection.
+    """
+    last_point = tf.expand_dims(tf.math.count_nonzero(tf.reduce_sum(edge_points, axis=-1), keepdims=True, axis=-1, dtype=tf.int32), axis=-1)
+    idx = tf.transpose(tf.broadcast_to(np.arange(16, dtype=np.int32), last_point.shape[:-1] + (16,)), perm=[0, 1, 2, 4, 3])
+    first_point = tf.squeeze(tf.gather(edge_points, last_point - last_point, axis=-2, batch_dims=-2), axis=-2)
+    outer_edges = tf.reshape(tf.where(idx != last_point, edge_points, first_point), edge_points.shape[:-2] + (8, 2, 2))
+    # Reshape the center point of each intersection to match the outer edges 
+    center = tf.broadcast_to(tf.expand_dims(center, axis=-2), outer_edges.shape[:-2] + (1, 2))
+    # Insert the center point into each edge to form the triangles
+    triangle_points = tf.concat([outer_edges, center], axis=-2)
+    # create a tensor filled with ones that will be concatenated to the last axis of the triangles.
+    ones = tf.ones(triangle_points.shape[:-1] + (1,), dtype=tf.float32)
+    # find the area of each triangle using the determinant and then sum them to find the area of
+    # intersection.
+    return tf.reduce_sum(tf.abs(tf.linalg.det(tf.concat([triangle_points, ones], axis=-1))), axis=-1) / 2
+
+def union_area(box1, box2, intersection, **kwargs):
+    box1 = pump_tensor(box1, **kwargs)
+    box2 = stretch_tensor(box2)
+    box1_points, box2_points = box1[..., :3, :], box2[..., :3, :]
+    ones1 = tf.ones(box1_points.shape[:-1] + (1,), dtype=tf.float32)
+    ones2 = tf.ones(box2_points.shape[:-1] + (1,), dtype=tf.float32)
+    
+    area1 = tf.abs(tf.linalg.det(tf.concat([box1_points, ones1], axis=-1)))
+    area2 = tf.abs(tf.linalg.det(tf.concat([box2_points, ones2], axis=-1)))
+
+    return (area1 + area2) - intersection
