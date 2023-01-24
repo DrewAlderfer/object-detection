@@ -110,3 +110,20 @@ class LabelWorker:
         phi = phi
         return row, col, width, height, phi
 
+def init_COCO(json_path:str, divs:List[str]):
+
+    result = {}
+    for target in divs:
+        file = Path(f"{json_path}/mvtec_screws_{target}.json")
+        db = COCO(file)
+
+        ids = db.getImgIds()
+        imgs = db.loadImgs(ids)
+        annIds = db.getAnnIds(ids)
+        print(f"Found {len(imgs)} {target} images")
+        result.update({target: {"coco": db,
+                                "ids": ids,
+                                "img_data": imgs,
+                                "annotations": db.loadAnns(annIds)}
+                       })
+    return result
