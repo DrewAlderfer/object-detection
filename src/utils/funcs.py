@@ -402,6 +402,34 @@ def union_area(label_corners, anchor_corners, intersection, **kwargs):
 
     return (area1 + area2) - intersection
 
+def calculate_giou(label_corners:TensorLike,
+                   anchor_corners:TensorLike,
+                   union:TensorLike,
+                   intersection:TensorLike) -> TensorLike:
+    label_corners = pump_tensor(label_corners, num_pumps=9)
+    anchor_corners = tf.broadcast_to(stretch_tensor(anchor_corners), shape=label_corners.shape)
+    all_points = tf.concat([label_corners, anchor_corners], axis=-2)
+    print(f"all_points: {all_points.shape}, {all_points.dtype}")
+    print(f"all_points: {all_points[0, 5, 238]}")
+    axes = tuple(range(len(all_points.shape)))
+    print(f"axes: {axes}")
+    all_points = tf.sort(tf.transpose(all_points, axes[:-2] + (axes[-1], axes[-2])), axis=-1)
+    all_points = tf.transpose(all_points, axes[:-2] + (axes[-1], axes[-2]))
+    gMax = tf.reduce_max(all_points, axis=-2)
+    print(f"gMax: {gMax.shape}, {gMax.dtype}")
+    gMin = tf.reduce_min(all_points, axis=-2)
+    print(f"gMin: {gMin.shape}, {gMin.dtype}")
+    print(f"gMax: {gMax[0, 5, 238]}")
+    print(f"gMin: {gMin[0, 5, 238]}")
+    wh = gMax - gMin
+    C = tf.squeeze(wh[..., 0:1] * wh[..., 1:])
+    print(f"C: {C.shape}, {C.dtype}")
+    print(f"C: {C[0, 5, 238]}")
+
+    return (intersection / union) - tf.abs(tf.divide(C, union)) / tf.abs(C)
+     
+
+
 def stretch_tensor(box_edges):
     return tf.expand_dims(box_edges, axis=1)
 

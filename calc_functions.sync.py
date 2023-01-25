@@ -83,31 +83,31 @@ old_intersections = box_cutter.rolling_intersection(old_corners, old_anchors)[0]
 old_intersections.shape
 
 # %%
-img, bb, an = (0, 5, 9)
-
-# %%
 x_points = construct_intersection_vertices(labels, anchors, num_pumps=num_anchors)
 print(f"x_points: {x_points.shape}")
 
 # %%
-union = union_area(label_corners, anchor_corners, areas, num_pumps=num_anchors)
+intersection = intersection_area(x_points)
+union = union_area(label_corners, anchor_corners, intersection, num_pumps=num_anchors)
+print(f"areas: {intersection.shape}, {intersection.dtype}")
+print(f"areas:\n{intersection[0, bb, an::108]}")
 print(f"union: {union.shape}, {union.dtype}")
 print(f"union:\n{union[0, bb, an::108]}")
 
 # %%
-intersection = intersection_area(x_points)
-print(f"areas: {intersection.shape}, {intersection.dtype}")
-print(f"areas:\n{intersection[0, bb, an::108]}")
+giou = calculate_giou(label_corners, anchor_corners, union, intersection)
+print(f"giou: {giou[img, bb, an::108]}")
 
 # %%
 iou = intersection / union
+triangles, int_edges = intersection_shapes(labels, anchors, num_pumps=num_anchors)
 print(f"IoU: {iou.shape}, {iou.dtype}")
 print(f"IoU:\n{iou[0, bb, an::108]}")
-
-# %%
-triangles, int_edges = intersection_shapes(labels, anchors, num_pumps=num_anchors)
 print(f"triangles: {triangles.shape}, {triangles.dtype}")
 print(f"int_edges: {int_edges.shape}, {int_edges.dtype}")
+
+# %%
+img, bb, an = (0, 5, 9 * 2 + 4 + 108*2)
 
 # %%
 fig, ax = plt.subplots(figsize=(8, 6))
@@ -139,11 +139,10 @@ ax.add_collection(mpl.collections.PatchCollection(verts, color='tomato', alpha=1
 plt.show()
 
 # %%
-img, bb, an = 0, 5, 9 * 2 + 4 + 108*5
 fig, ax = plt.subplots(figsize=(8, 6))
 ax.set(
-        ylim=[0, 384],
-        xlim=[0, 512],
+        ylim=[-40, 384+40],
+        xlim=[-40, 512+40],
         xticks=list(range(0, 512,int(np.ceil(512/12)))),
         yticks=list(range(0, 384, int(np.ceil(384/9)))),
         )
@@ -176,18 +175,19 @@ for i in range(x_points.shape[-2]):
     xpoints.append(point[0])
     ypoints.append(point[1])
     # points.append(Circle(point, radius=5, fill=False))
-for i in range(1, 12, 1):
+for i in range(0, 13, 1):
     line = i * 512/12
     lines.append([(line, 0), (line, 384)])
-for i in range(1, 9, 1):
+for i in range(0, 10, 1):
     line = i * 384/9
     lines.append([(0, line), (512, line)])
-grid_lines = mpl.collections.LineCollection(lines, colors='black', lw=1, alpha=1, zorder=200)
+grid_lines = mpl.collections.LineCollection(lines, colors='black', lw=1, alpha=.4, zorder=200)
 ax.add_collection(grid_lines)
 ax.add_collection(mpl.collections.LineCollection(label_edges[img, bb], lw=1))
 ax.add_collection(mpl.collections.LineCollection(anchor_edges[img, an].numpy(), lw=1, color="springgreen"))
 # ax.add_patch(PathPatch(paths, edgecolor="tab:purple", facecolor="tab:purple", alpha=.4, zorder=200))
 ax.add_collection(PatchCollection(triangles_list, facecolor=tri_colors, edgecolor=None, alpha=.6))
+ax.add_patch(Rectangle(xy[img, bb, an], wh[img, bb, an, 0], wh[img, bb, an, 1], fill=None, edgecolor="tomato", alpha=.7))
 ax.scatter(xpoints, ypoints, color="tomato", marker="o", s=5, lw=1, zorder=250)
 ax.axis('off')
 plt.show()
@@ -277,3 +277,6 @@ for img, ax in enumerate(axs):
 fig.tight_layout()
 plt.savefig("./images/bounding_box_examples_16.png")
 plt.show()
+
+# %%
+9 * 2 + 4 + 108*2
