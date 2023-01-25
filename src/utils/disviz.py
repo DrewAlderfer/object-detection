@@ -40,7 +40,7 @@ def display_label(label, color, target_size=(384, 512)):
         arrow showing the orientation and directoin of the object.
     """
     from matplotlib.patches import Arrow, Polygon
-    from funcs import get_corners
+    from .funcs import get_corners
     x, y, w, h, phi = label
     phi = phi + np.pi / 2
     x, y = x * target_size[1], y * target_size[0]

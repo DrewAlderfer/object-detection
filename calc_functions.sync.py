@@ -23,7 +23,7 @@ from src.utils.box_cutter import BoundingBox_Processor
 from src.utils.classes import CategoricalDataGen
 from src.utils.data_worker import LabelWorker
 from src.utils.funcs import *
-from src.utils.disviz import intersection_shapes
+from src.utils.disviz import intersection_shapes, display_label
 
 # %%
 # %load_ext autoreload
@@ -107,35 +107,42 @@ print(f"triangles: {triangles.shape}, {triangles.dtype}")
 print(f"int_edges: {int_edges.shape}, {int_edges.dtype}")
 
 # %%
+# Select a set of bounding boxes and anchors to display
 img, bb, an = (0, 5, 9 * 2 + 4 + 108*2)
 
 # %%
 fig, ax = plt.subplots(figsize=(8, 6))
 ax.set(
-        ylim=[0, 384],
-        xlim=[0, 512],
+        ylim=[-40, 384+40],
+        xlim=[-40, 512+40],
         xticks=list(range(0, 512,int(np.ceil(512/12)))),
         yticks=list(range(0, 384, int(np.ceil(384/9)))),
         )
 lines = []
 verts = []
-for i in range(num_anchors * 24):
-    point = tf.reshape(x_points[0, bb, an::108], [num_anchors * 24, 2])[i]
-    if point[0] == 0:
-        continue
-    verts.append(Circle(point, radius=2, color="tomato", zorder=10))
-for i in range(1, 12, 1):
+xpoints = []
+ypoints = []
+an_num = x_points[img, bb, an::108].shape[0]
+for x in range(an_num):
+#     print(x, an + x * 108)
+    for i in range(x_points.shape[-2]):
+        point = x_points[img, bb, an + x * 108, i]
+        if point[0] == 0:
+            continue
+        xpoints.append(point[0])
+        ypoints.append(point[1])
+for i in range(0, 13, 1):
     line = i * 512/12
     lines.append([(line, 0), (line, 384)])
-for i in range(1, 9, 1):
+for i in range(0, 10, 1):
     line = i * 384/9
     lines.append([(0, line), (512, line)])
-grid_lines = mpl.collections.LineCollection(lines, colors='black', lw=1, alpha=1, zorder=200)
+grid_lines = mpl.collections.LineCollection(lines, colors='black', lw=1, alpha=.4, zorder=200)
 ax.add_collection(grid_lines)
-ax.add_collection(mpl.collections.LineCollection(label_edges[0, bb]))
-ax.add_collection(mpl.collections.LineCollection(anchor_edges[0, an::108].numpy().reshape(num_anchors * 2, 4, 2), color="springgreen"))
-# ax.add_collection(mpl.collections.LineCollection(anchor_edges[0, an].numpy(), color="springgreen"))
-ax.add_collection(mpl.collections.PatchCollection(verts, color='tomato', alpha=1, zorder=250))
+ax.add_collection(mpl.collections.LineCollection(label_edges[img, bb]))
+ax.add_collection(mpl.collections.LineCollection(anchor_edges[img, an::108].numpy().reshape(14,4,2), lw=1, color="springgreen"))
+ax.scatter(xpoints, ypoints, color="tomato", marker="o", s=5, lw=1, zorder=250)
+ax.axis('off')
 plt.show()
 
 # %%
@@ -158,16 +165,14 @@ for i in range(triangles.shape[-3]):
     triangle = triangles[img, bb, an, i] 
     if triangle[0, 0] == 0:
         continue
-    print(triangle)
     tri_colors.append(next(color))
     triangles_list.append(Polygon(triangle))
-for i in range(int_edges.shape[-3]):
-    point = int_edges[img, bb, an, i]
-    if point[0, 0] == 0:
-        continue
-    print(point[0])
-    edges.append(point[0])
-paths = mpl.path.Path(edges)
+# for i in range(int_edges.shape[-3]):
+#     point = int_edges[img, bb, an, i]
+#     if point[0, 0] == 0:
+#         continue
+#     edges.append(point[0])
+# paths = mpl.path.Path(edges)
 for i in range(x_points.shape[-2]):
     point = x_points[img, bb, an, i]
     if point[0] == 0:
@@ -193,32 +198,6 @@ ax.axis('off')
 plt.show()
 
 # %%
-fig, ax = plt.subplots(figsize=(8, 6))
-ax.set(
-        ylim=[0, 384],
-        xlim=[0, 512],
-        xticks=list(range(0, 512,int(np.ceil(512/12)))),
-        yticks=list(range(0, 384, int(np.ceil(384/9)))),
-        )
-lines = []
-for i in range(1, 12, 1):
-    line = i * 512/12
-    lines.append([(line, 0), (line, 384)])
-for i in range(1, 9, 1):
-    line = i * 384/9
-    lines.append([(0, line), (512, line)])
-grid_lines = mpl.collections.LineCollection(lines, colors='black', lw=1, alpha=1, zorder=200)
-ax.add_collection(grid_lines)
-for i in range(24):
-    ax.add_collection(mpl.collections.LineCollection(step2[0, 0, i]))
-for i in range(9):
-    ax.add_collection(mpl.collections.LineCollection(anchr_edges[0, i:108:9].numpy().reshape(24, 4, 2), color="springgreen"))
-    # ax.add_collection(mpl.collections.LineCollection(anchr_edges[0, i+108:216:9].numpy().reshape(24, 4, 2), color="tomato"))
-    # ax.add_collection(mpl.collections.LineCollection(anchr_edges[0, i+216:324:9].numpy().reshape(24, 4, 2), color="orange"))
-# plt.savefig("./images/anchor_box_illustration.png")
-plt.show()
-
-# %%
 fig, axs = plt.subplots(2, 1, figsize=(8, 10))
 # axs = np.concatenate([ax1, ax2], axis=-1)
 for img, ax in enumerate(axs):
@@ -240,7 +219,8 @@ for img, ax in enumerate(axs):
     ax.imshow(load_img(images[img], target_size=(384, 512)))
     ax.add_collection(grid_lines)
     for idx, box in enumerate(label_corners[img]):
-        bbox, arrow = display_label(np.reshape(labels, (labels.shape[0],) + (12 * 9, labels.shape[-1]))[img, idx, 14:], ax, color=next(color))
+        n_color = next(color)
+        bbox, arrow = display_label(labels[img, idx, 14:], color=n_color)
         ax.add_patch(bbox)
         ax.add_patch(arrow)
         # ax.add_patch(Polygon(label_corners.reshape(269, 12 * 9, 4, 2)[img, idx], fill=None, edgecolor="tomato", lw=5))
@@ -270,13 +250,11 @@ for img, ax in enumerate(axs):
     ax.imshow(load_img(images[img], target_size=(384, 512)))
     ax.add_collection(grid_lines)
     for idx, box in enumerate(label_corners[img]):
-        bbox, arrow = display_label(np.reshape(labels, (labels.shape[0],) + (12 * 9, labels.shape[-1]))[img, idx, 14:], ax, color=next(color))
+        n_color = next(color)
+        bbox, arrow = display_label(labels[img, idx, 14:], color=n_color)
         ax.add_patch(bbox)
         ax.add_patch(arrow)
         # ax.add_patch(Polygon(box, fill=None, edgecolor="tomato", lw=5))
 fig.tight_layout()
 plt.savefig("./images/bounding_box_examples_16.png")
 plt.show()
-
-# %%
-9 * 2 + 4 + 108*2
