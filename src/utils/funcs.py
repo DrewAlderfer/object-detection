@@ -4,6 +4,7 @@ import pprint as pp
 from numpy.typing import ArrayLike, NDArray
 from pandas.core.window import rolling
 import tensorflow as tf
+from tensorflow.types.experimental import TensorLike
 from sklearn.cluster import KMeans
 
 from pycocotools.coco import COCO
@@ -216,7 +217,11 @@ def get_intersections(box1_edge, box2_edge):
     # by zero and all the ones that did by one.
     return tf.multiply(tf.squeeze(tf.stack([x_i, y_i], axis=-3), axis=[-2, -1]), mask)
 
-def construct_intersection_vertices(labels, anchors, xdivs:int=12, ydivs:int=9, **kwargs):
+def construct_intersection_vertices(labels,
+                                    anchors,
+                                    xdivs:int=12,
+                                    ydivs:int=9, 
+                                    **kwargs) -> TensorLike:
     """
     This function organizes the process of finding all points of the intersection between bounding
     boxes from the label set and all boxes from the anchor box set.
@@ -271,7 +276,7 @@ def find_inner_points(label:list, anchors:list, **kwargs):
     return tf.concat([is_inside(label_corners, anchor_edges), 
                       is_inside(anchor_corners, label_edges)], axis=-2)
 
-def is_inside(corners, box_edges):
+def is_inside(corners:TensorLike, box_edges:TensorLike) -> TensorLike:
     """
     Determines whether a point falls inside the edges of a convex shape by determining which side
     of each edge the point falls along moving clockwise along the edges.
@@ -301,9 +306,10 @@ def is_inside(corners, box_edges):
     # This returns 1 if the point is on the same side of all the edges; 0 if it is not.
     check = tf.cast(tf.reduce_all(tf.logical_not(left, right), axis=-2), dtype=tf.float32)
     # Zero out the points not inside the shape.
-    return tf.cast(tf.squeeze(corners[..., 0:1, :], axis=-2), dtype=tf.float32) * check
+    corners = tf.squeeze(corners[..., 0:1, :], axis=-2)
+    return tf.multiply(tf.cast(corners, dtype=tf.float32), check)
 
-def intersection_area(intersection_points):
+def intersection_area(intersection_points:TensorLike) -> TensorLike:
     """
     Function that takes a set of intersection points and returns a set of the areas.
     """
@@ -316,8 +322,9 @@ def intersection_area(intersection_points):
                                  intersection_points - center,
                                  nonzero)
     # Get the angles of each point in the intersection to the center point of the intersection shape.
-    point_angle = tf.where(mask, tf.math.atan2(center_adj_points[..., :, 1:],
-                                               center_adj_points[..., :, 0:1]) + np.pi,
+    angles = tf.math.atan2(center_adj_points[..., :, 1:], center_adj_points[..., :, 0:1]) 
+    point_angle = tf.where(mask, 
+                           tf.add(angles, tf.constant(np.pi, dtype=tf.float32, shape=(1,))),
                            nonzero)
     # order the points by their angle. The transpose here was necessary reordering the points. So
     # for a few steps the x and y values are not paired in the last axis of the tensor but remain
@@ -357,21 +364,27 @@ def intersection_area(intersection_points):
     last_point = tf.math.count_nonzero(last_point, keepdims=True, axis=-1, dtype=tf.int32)
     last_point = tf.expand_dims(last_point, axis=-1)
     # 2
-    idx = tf.transpose(tf.broadcast_to(np.arange(16, dtype=np.int32), last_point.shape[:-1] + (16,)), perm=[0, 1, 2, 4, 3])
+    idx = tf.transpose(tf.broadcast_to(np.arange(16, dtype=np.int32),
+                                       last_point.shape[:-1] + (16,)), perm=[0, 1, 2, 4, 3])
     # 3
-    first_point = tf.squeeze(tf.gather(edge_points, last_point - last_point, axis=-2, batch_dims=-2), axis=-2)
+    first_point = tf.squeeze(tf.gather(edge_points, last_point - last_point,
+                                       axis=-2, batch_dims=-2), axis=-2)
     # 4
-    outer_edges = tf.reshape(tf.where(idx != last_point, edge_points, first_point), edge_points.shape[:-2] + (8, 2, 2))
+    outer_edges = tf.reshape(tf.where(idx != last_point, edge_points, first_point), 
+                             edge_points.shape[:-2] + (8, 2, 2))
     # Create Triangles and take their area via the determinant
     # Reshape the center point of each intersection to match the outer edges 
-    center = tf.broadcast_to(tf.expand_dims(center, axis=-2), outer_edges.shape[:-2] + (1, 2))
+    center = tf.broadcast_to(tf.expand_dims(center, axis=-2),
+                             outer_edges.shape[:-2] + (1, 2))
     # Insert the center point into each edge to form the triangles
-    triangle_points = tf.concat([outer_edges, center], axis=-2)
+    triangle_points = tf.concat([outer_edges, center],
+                                axis=-2, name="triangle_outer_edges")
     # create a tensor filled with ones that will be concatenated to the last axis of the triangles.
     ones = tf.ones(triangle_points.shape[:-1] + (1,), dtype=tf.float32)
     # find the area of each triangle using the determinant and then sum them to find the area of
     # intersection.
-    return tf.reduce_sum(tf.abs(tf.linalg.det(tf.concat([triangle_points, ones], axis=-1))), axis=-1) / 2
+    triangle_areas = tf.abs(tf.divide(tf.linalg.det(tf.concat([triangle_points, ones], axis=-1)), 2))
+    return tf.reduce_sum(triangle_areas, axis=-1, name="intersection_areas")
 
 def union_area(label_corners, anchor_corners, intersection, **kwargs):
     """

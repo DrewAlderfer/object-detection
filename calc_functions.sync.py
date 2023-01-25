@@ -4,9 +4,9 @@ from glob import glob
 from typing import Union, Tuple, List
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-from matplotlib.patches import Arrow, Rectangle, Polygon, Circle
+from matplotlib.patches import Arrow, Rectangle, Polygon, Circle, PathPatch
 from matplotlib.animation import FuncAnimation, PillowWriter
-from matplotlib.collections import PolyCollection
+from matplotlib.collections import PatchCollection, PolyCollection
 import matplotlib.colors as mcolors
 
 import numpy as np
@@ -23,6 +23,7 @@ from src.utils.box_cutter import BoundingBox_Processor
 from src.utils.classes import CategoricalDataGen
 from src.utils.data_worker import LabelWorker
 from src.utils.funcs import *
+from src.utils.disviz import intersection_shapes
 
 # %%
 # %load_ext autoreload
@@ -82,8 +83,7 @@ old_intersections = box_cutter.rolling_intersection(old_corners, old_anchors)[0]
 old_intersections.shape
 
 # %%
-an = 9 * 3 + 2 + 108
-bb = 5
+img, bb, an = (0, 5, 9)
 
 # %%
 x_points = construct_intersection_vertices(labels, anchors, num_pumps=num_anchors)
@@ -105,9 +105,11 @@ print(f"IoU: {iou.shape}, {iou.dtype}")
 print(f"IoU:\n{iou[0, bb, an::108]}")
 
 # %%
-an = 9 * 3 + 2
-bb = 5
+triangles, int_edges = intersection_shapes(labels, anchors, num_pumps=num_anchors)
+print(f"triangles: {triangles.shape}, {triangles.dtype}")
+print(f"int_edges: {int_edges.shape}, {int_edges.dtype}")
 
+# %%
 fig, ax = plt.subplots(figsize=(8, 6))
 ax.set(
         ylim=[0, 384],
@@ -137,7 +139,7 @@ ax.add_collection(mpl.collections.PatchCollection(verts, color='tomato', alpha=1
 plt.show()
 
 # %%
-I, bb, an = e
+img, bb, an = 0, 5, 9 * 2 + 4 + 108*5
 fig, ax = plt.subplots(figsize=(8, 6))
 ax.set(
         ylim=[0, 384],
@@ -146,14 +148,34 @@ ax.set(
         yticks=list(range(0, 384, int(np.ceil(384/9)))),
         )
 lines = []
-verts = []
+edges = []
 points = []
-for i in range(8):
-    point = result[I, bb, an, i]
+triangles_list = []
+tri_colors = []
+faces = []
+xpoints = []
+ypoints = []
+for i in range(triangles.shape[-3]):
+    triangle = triangles[img, bb, an, i] 
+    if triangle[0, 0] == 0:
+        continue
+    print(triangle)
+    tri_colors.append(next(color))
+    triangles_list.append(Polygon(triangle))
+for i in range(int_edges.shape[-3]):
+    point = int_edges[img, bb, an, i]
+    if point[0, 0] == 0:
+        continue
+    print(point[0])
+    edges.append(point[0])
+paths = mpl.path.Path(edges)
+for i in range(x_points.shape[-2]):
+    point = x_points[img, bb, an, i]
     if point[0] == 0:
         continue
-    verts.append(Circle(point, radius=2, color="tomato", zorder=10))
-    points.append(point)
+    xpoints.append(point[0])
+    ypoints.append(point[1])
+    # points.append(Circle(point, radius=5, fill=False))
 for i in range(1, 12, 1):
     line = i * 512/12
     lines.append([(line, 0), (line, 384)])
@@ -162,11 +184,12 @@ for i in range(1, 9, 1):
     lines.append([(0, line), (512, line)])
 grid_lines = mpl.collections.LineCollection(lines, colors='black', lw=1, alpha=1, zorder=200)
 ax.add_collection(grid_lines)
-ax.add_collection(mpl.collections.LineCollection(label_edges[I, bb]))
-# ax.add_collection(mpl.collections.LineCollection(anchor_edges[0, an::108].numpy().reshape(num_anchors * 2, 4, 2), color="springgreen"))
-ax.add_collection(mpl.collections.LineCollection(anchor_edges[I, an].numpy(), color="springgreen"))
-ax.add_collection(mpl.collections.PatchCollection(verts, color='tomato', alpha=1, zorder=250))
-ax.add_patch(Polygon(points, color="red", alpha=.3))
+ax.add_collection(mpl.collections.LineCollection(label_edges[img, bb], lw=1))
+ax.add_collection(mpl.collections.LineCollection(anchor_edges[img, an].numpy(), lw=1, color="springgreen"))
+# ax.add_patch(PathPatch(paths, edgecolor="tab:purple", facecolor="tab:purple", alpha=.4, zorder=200))
+ax.add_collection(PatchCollection(triangles_list, facecolor=tri_colors, edgecolor=None, alpha=.6))
+ax.scatter(xpoints, ypoints, color="tomato", marker="o", s=5, lw=1, zorder=250)
+ax.axis('off')
 plt.show()
 
 # %%
