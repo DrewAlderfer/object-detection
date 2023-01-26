@@ -1,6 +1,9 @@
 import numpy as np
 import tensorflow as tf
 from tensorflow.types.experimental import TensorLike
+import matplotlib.pyplot as plt
+from matplotlib.patches import Arrow, Rectangle, Circle, Polygon
+from matplotlib.collections import PatchCollection, PathCollection, LineCollection
 
 def format_layers_for_display(activations:np.ndarray, layer_names:list, images_per_row:int=16):
     """
@@ -127,4 +130,124 @@ def intersection_shapes(labels:TensorLike,
     center = tf.broadcast_to(tf.expand_dims(center, axis=-2), outer_edges.shape[:-2] + (1, 2))
     # Insert the center point into each edge to form the triangles
     triangle_points = tf.concat([outer_edges, center], axis=-2, name="triangles")
-    return triangle_points, outer_edges
+    ones = tf.ones(triangle_points.shape[:-1] + (1,), dtype=tf.float32)
+    # find the area of each triangle using the determinant and then sum them to find the area of
+    # intersection.
+    triangle_areas = tf.abs(tf.divide(tf.linalg.det(tf.concat([triangle_points, ones], axis=-1)), 2))
+    return triangle_points, outer_edges, triangle_areas
+
+def get_gbox(label_corners:TensorLike, anchor_corners:TensorLike, **kwargs):
+    from .funcs import pump_tensor, stretch_tensor
+    label_corners = pump_tensor(label_corners, **kwargs)
+    anchor_corners = tf.broadcast_to(stretch_tensor(anchor_corners), shape=label_corners.shape)
+    all_points = tf.concat([label_corners, anchor_corners], axis=-2)
+    axes = tuple(range(len(all_points.shape)))
+    all_points = tf.sort(tf.transpose(all_points, axes[:-2] + (axes[-1], axes[-2])), axis=-1)
+    all_points = tf.transpose(all_points, axes[:-2] + (axes[-1], axes[-2]))
+    gMax = tf.reduce_max(all_points, axis=-2)
+    gMin = tf.reduce_min(all_points, axis=-2)
+    wh = gMax - gMin
+
+    return (gMin, wh)
+
+def triangle_shapes(triangles_tensor, img, bb, an):
+    triangles_list = []
+    count = 0
+    for i in range(triangles_tensor.shape[-3]):
+        triangle = triangles_tensor[img, bb, an, i] 
+        if triangle[0, 0] == 0:
+            continue
+        triangles_list.append(Polygon(triangle))
+        count += 1
+    return PatchCollection(triangles_list), count
+
+def mark_points(points, img, bb, an):
+    xpoints = []
+    ypoints = []
+    for i in range(points.shape[-2]):
+        point = points[img, bb, an, i]
+        if point[0] == 0:
+            continue
+        xpoints.append(point[0])
+        ypoints.append(point[1])
+    return xpoints, ypoints
+    # points.append(Circle(point, radius=5, fill=False))
+
+def image_grid_lines(xsize:int=512, ysize:int=384, xdivs:int=12, ydivs:int=9):
+    lines = []
+    for i in range(0, xdivs+1, 1):
+        line = i * xsize/xdivs
+        lines.append([(line, 0), (line, ysize)])
+    for i in range(0, ydivs+1, 1):
+        line = i * ysize/ydivs
+        lines.append([(0, line), (xsize, line)])
+    return LineCollection(lines, colors='black', lw=1, alpha=.4, zorder=200)
+
+def dis_Gbox(label_corners, anchor_corners, img, bb, an, **kwargs):
+    xy, wh = get_gbox(label_corners, anchor_corners, num_pumps=9)
+    return Rectangle(xy[img, bb, an], wh[img, bb, an, 0], wh[img, bb, an, 1], fill=None, edgecolor="tomato", alpha=.7, **kwargs)
+
+def set_plot(img, bb, an, label_corners, anchor_corners, padding:int=40):
+
+    xy, wh = get_gbox(label_corners, anchor_corners, num_pumps=9)
+    w, h = wh[img, bb, an, 0], wh[img, bb, an, 1]
+    x, y = xy[img, bb, an, 0], xy[img, bb, an, 1]
+    cx = x + w/2
+    cy = y + h/2
+    w = h * (8/6) + padding
+    h = h + padding
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.set(
+            xlim = [cx-w/2, cx+w/2],
+            ylim = [cy-h/2, cy+h/2]
+            )
+
+    return fig, ax 
+
+def set_ax(ax, img, bb, an, label_corners, anchor_corners, padding:int=40):
+    xy, wh = get_gbox(label_corners, anchor_corners, num_pumps=9)
+    w, h = wh[img, bb, an, 0], wh[img, bb, an, 1]
+    x, y = xy[img, bb, an, 0], xy[img, bb, an, 1]
+    cx = x + w/2
+    cy = y + h/2
+    w = h * (8/6) + padding
+    h = h + padding
+    ax.set(
+            xlim = [cx-w/2, cx+w/2],
+            ylim = [cy-h/2, cy+h/2]
+            )
+    return ax
+
+def display_area_addition(ax, tri_areas, gbox, img, bb, an):
+
+    xlim = ax.get_xlim()
+    xy = gbox.get_xy()
+    area_len = np.sqrt(tri_areas[img, bb, an])
+    area_sum = np.sqrt(np.cumsum(tri_areas[img, bb, an]))
+    yline = xy[1] - area_sum[-1] - 10
+    ylim = ax.get_ylim()
+    dy = ylim[0] - yline
+    dx = dy * 8/6
+
+    ax.set(
+            xlim = [xlim[0] - dx/2, xlim[1] + dx/2],
+            ylim = [yline, ylim[1]]
+           )
+    ylim = ax.get_ylim()
+
+    area_x_min = np.array(np.cumsum(np.roll(area_len, shift=1)))
+    area_x_min = area_x_min + np.array(np.arange(area_x_min.shape[0])) * 5
+
+    total_len = area_sum[-1] + area_x_min[-1] - area_x_min[0]
+
+    center_x_min = (sum(xlim) / 2) - (total_len / 2) + area_x_min
+    center_y_min = (ylim[0] + area_sum[-1] / 2) - area_len/2
+
+    block_starts = np.append(np.expand_dims(center_x_min, axis=-1), np.expand_dims(center_y_min, axis=-1), axis=-1)
+    
+    sum_block_center = center_x_min[-1] + (area_sum[-1] / 2)
+    sum_block_x = sum_block_center - area_sum / 2
+    sum_block_y = (ylim[0] + area_sum[-1] / 2) - area_sum / 2
+    sum_block_starts = np.asarray([sum_block_x, sum_block_y], dtype=np.float32).T
+
+    return sum_block_starts, block_starts, area_sum, area_len

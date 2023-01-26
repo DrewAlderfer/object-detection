@@ -6,8 +6,9 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.patches import Arrow, Rectangle, Polygon, Circle, PathPatch
 from matplotlib.animation import FuncAnimation, PillowWriter
-from matplotlib.collections import PatchCollection, PolyCollection
+from matplotlib.collections import PatchCollection, PolyCollection, LineCollection
 import matplotlib.colors as mcolors
+from IPython.display import HTML
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -21,9 +22,9 @@ import pprint as pp
 
 from src.utils.box_cutter import BoundingBox_Processor
 from src.utils.classes import CategoricalDataGen
-from src.utils.data_worker import LabelWorker
+from src.utils.data_worker import LabelWorker, init_COCO
 from src.utils.funcs import *
-from src.utils.disviz import intersection_shapes, display_label
+from src.utils.disviz import *
 
 # %%
 # %load_ext autoreload
@@ -100,7 +101,7 @@ print(f"giou: {giou[img, bb, an::108]}")
 
 # %%
 iou = intersection / union
-triangles, int_edges = intersection_shapes(labels, anchors, num_pumps=num_anchors)
+triangles, int_edges, tri_areas = intersection_shapes(labels, anchors, num_pumps=num_anchors)
 print(f"IoU: {iou.shape}, {iou.dtype}")
 print(f"IoU:\n{iou[0, bb, an::108]}")
 print(f"triangles: {triangles.shape}, {triangles.dtype}")
@@ -108,11 +109,13 @@ print(f"int_edges: {int_edges.shape}, {int_edges.dtype}")
 
 # %%
 # Select a set of bounding boxes and anchors to display
-img, bb, an = (0, 5, 9 * 2 + 4 + 108*2)
+def get_coords(img, bb, x, y, num):
+    an = x * 9 + y + 108 * num
+    return img, bb, an
 
 # %%
-fig, ax = plt.subplots(figsize=(8, 6))
-ax.set(
+fig, axs = plt.subplots(figsize=(8, 6))
+axs.set(
         ylim=[-40, 384+40],
         xlim=[-40, 512+40],
         xticks=list(range(0, 512,int(np.ceil(512/12)))),
@@ -138,69 +141,107 @@ for i in range(0, 10, 1):
     line = i * 384/9
     lines.append([(0, line), (512, line)])
 grid_lines = mpl.collections.LineCollection(lines, colors='black', lw=1, alpha=.4, zorder=200)
-ax.add_collection(grid_lines)
-ax.add_collection(mpl.collections.LineCollection(label_edges[img, bb]))
-ax.add_collection(mpl.collections.LineCollection(anchor_edges[img, an::108].numpy().reshape(14,4,2), lw=1, color="springgreen"))
-ax.scatter(xpoints, ypoints, color="tomato", marker="o", s=5, lw=1, zorder=250)
-ax.axis('off')
+axs.add_collection(grid_lines)
+axs.add_collection(mpl.collections.LineCollection(label_edges[img, bb]))
+axs.add_collection(mpl.collections.LineCollection(anchor_edges[img, an::108].numpy().reshape(14,4,2), lw=1, color="springgreen"))
+axs.scatter(xpoints, ypoints, color="tomato", marker="o", s=5, lw=1, zorder=250)
+axs.axis('off')
 plt.show()
 
 # %%
-fig, ax = plt.subplots(figsize=(8, 6))
-ax.set(
-        ylim=[-40, 384+40],
-        xlim=[-40, 512+40],
-        xticks=list(range(0, 512,int(np.ceil(512/12)))),
-        yticks=list(range(0, 384, int(np.ceil(384/9)))),
-        )
-lines = []
-edges = []
-points = []
-triangles_list = []
-tri_colors = []
-faces = []
-xpoints = []
-ypoints = []
-for i in range(triangles.shape[-3]):
-    triangle = triangles[img, bb, an, i] 
-    if triangle[0, 0] == 0:
-        continue
-    tri_colors.append(next(color))
-    triangles_list.append(Polygon(triangle))
-# for i in range(int_edges.shape[-3]):
-#     point = int_edges[img, bb, an, i]
-#     if point[0, 0] == 0:
-#         continue
-#     edges.append(point[0])
-# paths = mpl.path.Path(edges)
-for i in range(x_points.shape[-2]):
-    point = x_points[img, bb, an, i]
-    if point[0] == 0:
-        continue
-    xpoints.append(point[0])
-    ypoints.append(point[1])
-    # points.append(Circle(point, radius=5, fill=False))
-for i in range(0, 13, 1):
-    line = i * 512/12
-    lines.append([(line, 0), (line, 384)])
-for i in range(0, 10, 1):
-    line = i * 384/9
-    lines.append([(0, line), (512, line)])
-grid_lines = mpl.collections.LineCollection(lines, colors='black', lw=1, alpha=.4, zorder=200)
-ax.add_collection(grid_lines)
-ax.add_collection(mpl.collections.LineCollection(label_edges[img, bb], lw=1))
-ax.add_collection(mpl.collections.LineCollection(anchor_edges[img, an].numpy(), lw=1, color="springgreen"))
-# ax.add_patch(PathPatch(paths, edgecolor="tab:purple", facecolor="tab:purple", alpha=.4, zorder=200))
-ax.add_collection(PatchCollection(triangles_list, facecolor=tri_colors, edgecolor=None, alpha=.6))
-ax.add_patch(Rectangle(xy[img, bb, an], wh[img, bb, an, 0], wh[img, bb, an, 1], fill=None, edgecolor="tomato", alpha=.7))
-ax.scatter(xpoints, ypoints, color="tomato", marker="o", s=5, lw=1, zorder=250)
-ax.axis('off')
+plt.close()
+img, bb, an = get_coords(0, 7, 6, 1, 5)
+print(f"img: {img} | bb: {bb} | an: {an} (anchor number = {divmod(an, 108)[0] + 1})")
+fig, axs = set_plot(img, bb, an, label_corners, anchor_corners, padding=20)
+axs.add_collection(mpl.collections.LineCollection(label_edges[img, bb], lw=1))
+axs.add_collection(mpl.collections.LineCollection(anchor_edges[img, an].numpy(), lw=1, color="springgreen"))
+tri_shape, count = triangle_shapes(triangles, img, bb, an)
+gbox = dis_Gbox(label_corners, anchor_corners, img, bb, an)
+sum_block_starts, block_starts, area_sum, area_len = display_area_addition(axs, tri_areas, gbox, img, bb, an)
+
+def animation(x):
+    tri_colors = []
+    for i in range(count):
+        if i == x:
+            tri_colors.append("lightskyblue")
+            continue
+        tri_colors.append("dodgerblue")
+    tri_shape.set(facecolors=tri_colors,
+                  edgecolors=tri_colors)
+    axs.add_patch(Rectangle(sum_block_starts[x], area_sum[x], area_sum[x], facecolor="springgreen", zorder=200))
+    axs.add_patch(Rectangle(block_starts[x], area_len[x], area_len[x], facecolor='dodgerblue', zorder=200)) 
+    axs.add_collection(tri_shape)
+
+axs.add_patch(gbox)
+x, y = mark_points(x_points, img, bb, an)
+axs.scatter(x, y, color="tomato", marker="o", s=5, lw=1, zorder=250)
+axs.axis('off')
+axs.set_title("Calculating Intersection Example")
+anim = FuncAnimation(fig, animation, frames=list(range(count)))
+image_name = glob("./images/triangle_anim_**.gif")
+num = len(image_name) + 1
+image_name = image_name[-1][:-7] + f"{num:03d}.gif"
+print(f"saving animations to:\n{image_name}")
+anim.save(image_name, fps=1.5)
+plt.show()
+
+# %%
+fig, axes = plt.subplots(3, 3, figsize=(12, 9))
+axs = []
+for i in range(3):
+    axs.extend(axes[i])
+def animation(frame):
+    for i, ax in enumerate(axs):
+        img, bb, an = get_coords(0, 7, 6, 1, i)
+        ax.add_collection(mpl.collections.LineCollection(label_edges[img, bb], lw=1))
+        ax.add_collection(mpl.collections.LineCollection(anchor_edges[img, an].numpy(), lw=1, color="springgreen"))
+        set_ax(ax, img, bb, an, label_corners, anchor_corners)
+        x, y = mark_points(x_points, img, bb, an)
+        tri_shape, count = triangle_shapes(triangles, img, bb, an)
+        gbox = dis_Gbox(label_corners, anchor_corners, img, bb, an)
+        sum_block_starts, block_starts, area_sum, area_len = display_area_addition(ax, tri_areas, gbox, img, bb, an)
+
+        tri_colors = []
+
+        for num in range(count):
+            print(f"num: {num} | frame: {frame}")
+            if num == frame:
+                tri_colors.append("lightskyblue")
+                continue
+            tri_colors.append("dodgerblue")
+        tri_shape.set(facecolors=tri_colors,
+                      edgecolors=tri_colors)
+        for a in range(count):
+            if a == frame:
+                print(f"a: {a}")
+                ax.add_patch(Rectangle(sum_block_starts[a], area_sum[a], area_sum[a], facecolor="springgreen", zorder=200))
+                ax.add_patch(Rectangle(block_starts[a], area_len[a], area_len[a], facecolor='dodgerblue', zorder=200)) 
+        ax.add_collection(tri_shape)
+
+        ax.add_patch(gbox)
+        ax.tick_params(
+                axis='both',
+                which='both',
+                labelbottom=False,
+                labelleft=False,
+                bottom=False,
+                left=False
+                )
+        ax.scatter(x, y, color="tomato", marker="o", s=5, lw=1, zorder=250)
+
+anim = FuncAnimation(fig, animation, frames=list(range(8)))
+image_name = glob("./images/triangle_anim_**.gif")
+num = len(image_name) + 1
+image_name = image_name[-1][:-7] + f"{num:03d}.gif"
+print(f"saving animations to:\n{image_name}")
+anim.save(image_name, fps=1.5)
+
 plt.show()
 
 # %%
 fig, axs = plt.subplots(2, 1, figsize=(8, 10))
 # axs = np.concatenate([ax1, ax2], axis=-1)
-for img, ax in enumerate(axs):
+for img, axs in enumerate(axs):
     lines = []
     for i in range(1, 12, 1):
         line = i * 512/12
@@ -209,20 +250,20 @@ for img, ax in enumerate(axs):
         line = i * 384/9
         lines.append([(0, line), (512, line)])
     grid_lines = mpl.collections.LineCollection(lines, colors='black', lw=1, ls='--', alpha=.4)
-    ax.set(
+    axs.set(
             ylim=[0, 384],
             xlim=[0, 512],
             xticks=list(range(0, 512,int(np.ceil(512/12)))),
             yticks=list(range(0, 384, int(np.ceil(384/9)))),
             )
-    ax.axis('off')
-    ax.imshow(load_img(images[img], target_size=(384, 512)))
-    ax.add_collection(grid_lines)
+    axs.axis('off')
+    axs.imshow(load_img(images[img], target_size=(384, 512)))
+    axs.add_collection(grid_lines)
     for idx, box in enumerate(label_corners[img]):
         n_color = next(color)
         bbox, arrow = display_label(labels[img, idx, 14:], color=n_color)
-        ax.add_patch(bbox)
-        ax.add_patch(arrow)
+        axs.add_patch(bbox)
+        axs.add_patch(arrow)
         # ax.add_patch(Polygon(label_corners.reshape(269, 12 * 9, 4, 2)[img, idx], fill=None, edgecolor="tomato", lw=5))
 fig.tight_layout()
 plt.savefig("./images/bounding_box_examples_2.png")
@@ -231,7 +272,7 @@ plt.show()
 # %%
 fig, [ax1, ax2, ax3, ax4] = plt.subplots(4, 3, figsize=(12, 12))
 axs = np.concatenate([ax1, ax2, ax3, ax4], axis=-1)
-for img, ax in enumerate(axs):
+for img, axs in enumerate(axs):
     lines = []
     for i in range(1, 12, 1):
         line = i * 512/12
@@ -240,20 +281,20 @@ for img, ax in enumerate(axs):
         line = i * 384/9
         lines.append([(0, line), (512, line)])
     grid_lines = mpl.collections.LineCollection(lines, colors='black', lw=1, ls='--', alpha=.4)
-    ax.set(
+    axs.set(
             ylim=[0, 384],
             xlim=[0, 512],
             xticks=list(range(0, 512,int(np.ceil(512/12)))),
             yticks=list(range(0, 384, int(np.ceil(384/9)))),
             )
-    ax.axis('off')
-    ax.imshow(load_img(images[img], target_size=(384, 512)))
-    ax.add_collection(grid_lines)
+    axs.axis('off')
+    axs.imshow(load_img(images[img], target_size=(384, 512)))
+    axs.add_collection(grid_lines)
     for idx, box in enumerate(label_corners[img]):
         n_color = next(color)
         bbox, arrow = display_label(labels[img, idx, 14:], color=n_color)
-        ax.add_patch(bbox)
-        ax.add_patch(arrow)
+        axs.add_patch(bbox)
+        axs.add_patch(arrow)
         # ax.add_patch(Polygon(box, fill=None, edgecolor="tomato", lw=5))
 fig.tight_layout()
 plt.savefig("./images/bounding_box_examples_16.png")
