@@ -117,7 +117,7 @@ def get_corners(box_vectors:NDArray[np.float32],
     if box_vectors.shape[-1] > 5:
         box_vectors = box_vectors[..., 14:19]
     if rank > 2:
-        box_vectors = box_vectors.reshape(box_vectors.shape[0], np.cumprod(box_vectors.shape[1:-1])[-1], box_vectors.shape[-1])
+        box_vectors = tf.reshape(box_vectors, [box_vectors.shape[0], np.cumprod(box_vectors.shape[1:-1])[-1], box_vectors.shape[-1]])
         x = np.zeros(box_vectors.shape[0:2] + (4,), dtype=np.float32) 
         y = np.zeros(box_vectors.shape[0:2] + (4,), dtype=np.float32) 
     else:
@@ -243,8 +243,8 @@ def construct_intersection_vertices(labels,
     box_exists = tf.reshape(labels[..., 13:14], labels.shape[:-1] + (1, 1, 1))
     inner_points = inner_points * box_exists
 
-    intersection_points = find_intersection_points(label_edges, anchor_edges, **kwargs)
-    return  tf.concat([intersection_points, inner_points], axis=-2)
+    intersection_points = find_intersection_points(label_edges, anchor_edges, num_pumps=pumps)
+    return  tf.concat([intersection_points, inner_points], axis=-2), label_corners, anchor_corners
 
 def find_inner_points(label:list, anchors:list, **kwargs):
     """
@@ -409,22 +409,22 @@ def calculate_giou(label_corners:TensorLike,
     label_corners = pump_tensor(label_corners, num_pumps=9)
     anchor_corners = tf.broadcast_to(stretch_tensor(anchor_corners), shape=label_corners.shape)
     all_points = tf.concat([label_corners, anchor_corners], axis=-2)
-    print(f"all_points: {all_points.shape}, {all_points.dtype}")
-    print(f"all_points: {all_points[0, 5, 238]}")
+    # print(f"all_points: {all_points.shape}, {all_points.dtype}")
+    # print(f"all_points: {all_points[0, 5, 238]}")
     axes = tuple(range(len(all_points.shape)))
-    print(f"axes: {axes}")
+    # print(f"axes: {axes}")
     all_points = tf.sort(tf.transpose(all_points, axes[:-2] + (axes[-1], axes[-2])), axis=-1)
     all_points = tf.transpose(all_points, axes[:-2] + (axes[-1], axes[-2]))
     gMax = tf.reduce_max(all_points, axis=-2)
-    print(f"gMax: {gMax.shape}, {gMax.dtype}")
+    # print(f"gMax: {gMax.shape}, {gMax.dtype}")
     gMin = tf.reduce_min(all_points, axis=-2)
-    print(f"gMin: {gMin.shape}, {gMin.dtype}")
-    print(f"gMax: {gMax[0, 5, 238]}")
-    print(f"gMin: {gMin[0, 5, 238]}")
+    # print(f"gMin: {gMin.shape}, {gMin.dtype}")
+    # print(f"gMax: {gMax[0, 5, 238]}")
+    # print(f"gMin: {gMin[0, 5, 238]}")
     wh = gMax - gMin
     C = tf.squeeze(wh[..., 0:1] * wh[..., 1:])
-    print(f"C: {C.shape}, {C.dtype}")
-    print(f"C: {C[0, 5, 238]}")
+    # print(f"C: {C.shape}, {C.dtype}")
+    # print(f"C: {C[0, 5, 238]}")
 
     return (intersection / union) - tf.abs(tf.divide(C, union)) / tf.abs(C)
      
