@@ -54,3 +54,59 @@ class CNNBlock(layers.Layer):
         x = tf.nn.relu(x)
         return x
 
+class BoxCutter(Layer):
+    def __init__(self, num_classes, units):
+        super().__init__()
+        self.C = num_classes
+        self.units = units
+
+    def build(self, input_shape):
+        assert(len(input_shape) == 4)
+        print(f"input_shape: {input_shape}")
+        self.B = int(input_shape[-1] / (self.C + 1 + self.units))
+
+    def call(self, inputs):
+        batch, x, y = inputs.shape[:3]
+        print(f"batch: {batch}, x: {x}, y: {y}, num_boxes: {self.B}")
+        detectors = tf.concat(tf.split(tf.expand_dims(inputs, axis=-2), self.B, axis=-1), axis=-2)
+        new_shape = (detectors.shape[0], x * y) + detectors.shape[-2:]
+        print(f"new_shape: {new_shape}")
+        detectors = tf.reshape(detectors, shape=new_shape)
+        classes = detectors[..., :self.C]
+        object = detectors[..., self.C:self.C+1]
+        boxes = detectors[..., -self.units:]
+        print(f"detectors: {detectors.shape}")
+        # classes = tf.reshape(inputs[..., :self.C], (batch, x * y, self.C))
+        # object = tf.reshape(inputs[..., self.C:self.C+1], (batch, x * y, 1))
+        # boxes = tf.concat(tf.split(tf.expand_dims(inputs[..., self.C+1:], axis=-2), self.B, axis=-1), axis=-2)
+        # boxes = tf.reshape(boxes, [batch, x * y, self.B, self.units])
+
+        return [classes, object, boxes]
+
+class AddAnchors(Layer):
+    def __init__(self, anchors):
+        super().__init__()
+        self.anchors = anchors
+
+    def build(self, input_shape):
+        print(f"input_shape: {input_shape}")
+        self.units = input_shape[-1]
+        self.B = input_shape[-2]
+        w_init = tf.random_normal_initializer(stddev=0.01)
+        self.w = tf.Variable(
+                initial_value = w_init(shape=(input_shape), dtype=tf.float32),
+                trainable=True
+                )
+        print(f"weights: {self.w.shape}")
+        print(f"anchors: {self.anchors.shape}")
+        b_values = tf.reshape(self.anchors, input_shape)
+        print(f"b_values: {b_values.shape}")
+        b_init = tf.zeros_initializer()
+        self.b = tf.Variable(
+                initial_value=b_init(shape=(b_values.shape), dtype=tf.float32) + b_values,
+                trainable=True
+                )
+
+    def call(self, inputs):
+        x = tf.math.l2_normalize(inputs, axis=-2)
+        return x * self.w + self.b
