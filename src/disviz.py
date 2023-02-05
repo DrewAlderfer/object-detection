@@ -251,3 +251,43 @@ def display_area_addition(ax, tri_areas, gbox, img, bb, an):
     sum_block_starts = np.asarray([sum_block_x, sum_block_y], dtype=np.float32).T
 
     return sum_block_starts, block_starts, area_sum, area_len
+
+def setup_labels_plot(num_plots:Tuple[int, int]=(1, 1),
+                      img_width:int=768,
+                      img_height:int=576,
+                      margin_size:int=40,
+                      display_grid:bool=True):
+    # --------------------
+    # Graph Setup
+    # --------------------
+    figsize = np.array([8, 6]) * np.array(num_plots)[::-1]
+    fig, axs = plt.subplots(num_plots[0], num_plots[1], figsize=figsize)
+    axs = np.array([axs]).flatten()
+    for ax in axs:
+        ax.set(
+                ylim=[-margin_size, img_height+margin_size],
+                xlim=[-margin_size, img_width+margin_size],
+                )
+        ax.tick_params(
+                axis='both',
+                which='both',
+                bottom = False,
+                left = False,
+                labelleft = False,
+                labelbottom=False
+                )
+        # --------------------
+        # Grid Setup
+        # --------------------
+        if display_grid:
+            lines = []
+            for i in range(0, 13, 1):
+                line = i * img_width/12
+                lines.append([(line, 0), (line, img_height)])
+            for i in range(0, 10, 1):
+                line = i * img_height/9
+                lines.append([(0, line), (img_width, line)])
+            grid_lines = mpl.collections.LineCollection(lines, colors='black', lw=1, alpha=.4, zorder=200)
+            ax.add_collection(grid_lines)
+
+    return fig, axs

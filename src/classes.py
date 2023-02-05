@@ -7,7 +7,7 @@ import matplotlib as plt
 from numpy.typing import ArrayLike
 from tensorflow.keras.utils import load_img
 
-from .old import make_masks, process_img_annotations, rotate
+from .old.old import make_masks, process_img_annotations, rotate
 
 class data_generator:
     def __init__(

@@ -8,7 +8,7 @@ from pycocotools.coco import COCO
 import tensorflow as tf
 from tensorflow.keras.utils import load_img
 
-from .old import make_masks, process_img_annotations, rotate
+from .old.old import make_masks, process_img_annotations, rotate
 
 
 class LabelWorker:
@@ -103,13 +103,15 @@ class LabelWorker:
         """
         # grab bbox info
         row, col, width, height, phi = entry
+        if phi > np.pi:
+            phi = phi - (2 * np.pi)
         # -pi to pi -> 0 to 2*pi
         # initial bounds
         col = col / self.input_size[1] # * self.target_size[1] / self.input_size[1]
         row = row / self.input_size[0]# * self.target_size[0] / self.input_size[0]
         width = width / self.input_size[1] # * self.target_size[1] / self.input_size[1]
         height = height / self.input_size[0] # * self.target_size[0] / self.input_size[0]
-        phi = phi
+        phi = (phi + np.pi) / (2 * np.pi)
         return row, col, width, height, phi
 
 def init_COCO(json_path:str, divs:List[str]):

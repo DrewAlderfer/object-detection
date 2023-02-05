@@ -117,14 +117,17 @@ def stack_anchors(anchors:NDArray[np.float32]) -> NDArray:
 
 def get_corners(box_vectors:NDArray[np.float32],
                 img_width:int=512,
-                img_height:int=384) -> NDArray[np.float32]:
+                img_height:int=384,
+                debug:bool=False) -> NDArray[np.float32]:
     """
     Function that takes a tensor of box label vectors and returns the corners of the bounding box
     described by the vector [x, y, w, h, phi].
     """
-    print("-" * 15)
-    print("Get Corners Function Start:")
-    print(f"inputs:\nbox_vectors: {box_vectors.shape}, {box_vectors.dtype}")
+    if debug:
+        print("-" * 15)
+        print("Get Corners Function Start:")
+        print(f"inputs:\nbox_vectors: {box_vectors.shape}, {box_vectors.dtype}")
+
     rank = len(box_vectors.shape)
     if box_vectors.shape[-1] > 5:
         box_vectors = box_vectors[..., 14:19]
@@ -139,53 +142,81 @@ def get_corners(box_vectors:NDArray[np.float32],
     #     y = np.zeros(box_vectors.shape[0:-1] + (4,), dtype=np.float32) 
 
     # ---- Test
-    x = np.zeros(box_vectors.shape[0:-1] + (4,), dtype=np.float32) 
-    y = np.zeros(box_vectors.shape[0:-1] + (4,), dtype=np.float32) 
+    x = tf.zeros(box_vectors.shape[0:-1] + (4,), dtype=tf.float32) 
+    y = tf.zeros(box_vectors.shape[0:-1] + (4,), dtype=tf.float32) 
     # ---- Test
 
     cx, cy, = box_vectors[..., 0:1], box_vectors[..., 1:2]
-    phi = box_vectors[..., -1:]
+    phi = box_vectors[..., -1:] * (2 * np.pi) - np.pi
 
     # give width and height their own tensors to make it easier to write the math
     w = tf.expand_dims(box_vectors[...,2], axis=-1)
     h = tf.expand_dims(box_vectors[...,3], axis=-1)
     # Set x / y coordinates based on the center location and the width/height of the box
-    print(f"x: {x.shape}")
-    x[..., 0:2] = tf.add(cx, w/2)
-    x[..., 2:] = tf.subtract(cx, w/2)
-    y[..., 0::3] = tf.add(cy, h/2)
-    y[..., 1:-1] = tf.subtract(cy, h/2)
+    x1 = x[..., 0:2] + tf.add(cx, w/2)
+    x2 = x[..., 2:] + tf.subtract(cx, w/2)
+    y1 = y[..., 0:1] + tf.add(cy, h/2)
+    y2 = y[..., 1:-1] + tf.subtract(cy, h/2)
+    y3 = y[..., -1:] + tf.add(cy, h/2)
+    x = tf.concat([x1, x2], axis=-1)
+    y = tf.concat([y1, y2, y3], axis=-1)
     # Subtract the center point from each point in the corners. This centers the points around zero
     # so that we can rotate them around their local center point.
-    scale = np.array([img_width, img_height])
+    scale = tf.constant([img_width, img_height], dtype=tf.float32)
     corner_points = tf.stack([x, y], axis=-1) * scale
     center_point = tf.stack([cx, cy], axis=-1) * scale
     centered = tf.subtract(corner_points, center_point) 
 
     # Set up the rotation matrix tensor
-    cos, sin = np.cos(phi), np.sin(phi)
-    R = tf.squeeze(np.row_stack(np.array([[[cos, -sin],
-                                           [sin, cos]]])), axis=-1)
+    print(f"phi: {phi.shape}")
+    cos, sin = tf.cos(phi), tf.sin(phi)
+    R = tf.stack([tf.concat([cos, -sin], axis=-1),
+                  tf.concat([sin, cos], axis=-1)], axis=-2)
     # Take a shape like: (a, a, b, c) or (a, a, b)
     # transpose it into: (b, c, a, a) or (b, a, a)
-    r_idx = tuple(range(len(R.shape)))
-    R = tf.transpose(R, r_idx[2:] + r_idx[0:2])
+    # r_idx = tuple(range(len(R.shape)))
+    # R = tf.transpose(R, r_idx[2:] + r_idx[0:2])
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("Get Corners Function End:")
+        print(f"output: {tf.add(tf.matmul(centered, R), center_point).shape}, {tf.add(tf.matmul(centered, R), center_point).dtype}")
+        print("-" * 15)
+    # -------------
     # Return the points with the rotation applied and then the center point added back in.
-    print("Get Corners Function End:")
-    print(f"output: {tf.add(tf.matmul(centered, R), center_point).shape}, {tf.add(tf.matmul(centered, R), center_point).dtype}")
-    print("-" * 15)
     return tf.add(tf.matmul(centered, R), center_point)
 
-def get_edges(bbox_tensor:Union[tf.Tensor, NDArray]):
-    print("-" * 15)
-    print("Get Edges Function Start:")
-    print(f"input:\nbbox_tensor: {bbox_tensor.shape}, {bbox_tensor.dtype}\n")
+def get_edges(bbox_tensor:Union[tf.Tensor, NDArray], debug:bool=False) -> TensorLike:
+    """
+    Takes a set of box corners as a tensor like object and returns the edges of that shape.
+    """
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("-" * 15)
+        print("Get Edges Function Start:")
+        print(f"input:\nbbox_tensor: {bbox_tensor.shape}, {bbox_tensor.dtype}\n")
+    # ------------------------
+    # Function Body
+    # ------------------------
     z = tf.roll(bbox_tensor, shift=-1, axis=-2)
-    print("Get Edges End:")
-    print(f"output: {tf.stack([bbox_tensor, z], axis=-2).shape}, {tf.stack([bbox_tensor, z], axis=-2).dtype}")
+
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("Get Edges End:")
+        print(f"output: {tf.stack([bbox_tensor, z], axis=-2).shape}, {tf.stack([bbox_tensor, z], axis=-2).dtype}")
+    # -------------
+
     return tf.stack([bbox_tensor, z], axis=-2)
 
-def find_intersection_points(box1_edges, box2_edges, **kwargs):
+def find_intersection_points(box1_edges:TensorLike,
+                             box2_edges:TensorLike,
+                             debug:bool=False,
+                             **kwargs) -> TensorLike:
     """
     Parameters:
         Takes two tensors with the edges of label and anchor bounding boxes.
@@ -194,9 +225,17 @@ def find_intersection_points(box1_edges, box2_edges, **kwargs):
         a tensor containing the intersection points of each label bounding box with each anchor
         box.
     """
-    print("-" * 30)
-    print("Find Intersection Points Function Start:")
-    print(f"inputs:\nbox1: {box1_edges.shape}, {box1_edges.dtype}\nbox2_edges: {box2_edges.shape}, {box2_edges.dtype}")
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("-" * 30)
+        print("Find Intersection Points Function Start:")
+        print(f"inputs:\nbox1: {box1_edges.shape}, {box1_edges.dtype}\nbox2_edges: {box2_edges.shape}, {box2_edges.dtype}")
+
+    # --------------------------------------------
+    # Find Intersection Points Function
+    # --------------------------------------------
     if box1_edges.shape != box2_edges.shape:
         box1_edges = pump_tensor(box1_edges, **kwargs)
         box2_edges = stretch_tensor(box2_edges)
@@ -204,15 +243,21 @@ def find_intersection_points(box1_edges, box2_edges, **kwargs):
     # box1_edges = tf.constant(box1_edges.shape[:4] + (4,) + box1_edges.shape[-2:], tf.expand_dims(box1_edges, axis=-3))
     box1_edges = tf.broadcast_to(tf.expand_dims(box1_edges, axis=-3), shape=box1_edges.shape[:-3] + (4,) + box1_edges.shape[-3:])
     box2_edges = tf.expand_dims(box2_edges, axis=-4)
-    print(f"box_shape: {box_shape}")
-    result = tf.reshape(get_intersections(box1_edges, box2_edges), shape=box_shape + (16, 2))
-    print("Find Intersection Points Function End:")
-    print(f"output: {result.shape}")
-    print("-" * 30)
 
-    return result
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        result = tf.reshape(get_intersections(box1_edges, box2_edges, **kwargs), shape=box_shape + (16, 2))
+        print("Find Intersection Points Function End:")
+        print(f"output: {result.shape}")
+        print("-" * 30)
+        return result
+    # -------
 
-def get_intersections(box1_edge, box2_edge):
+    return tf.reshape(get_intersections(box1_edges, box2_edges, **kwargs), shape=box_shape + (16, 2))
+
+def get_intersections(box1_edge, box2_edge, debug:bool=False, **kwargs) -> TensorLike:
     """
     calculates the edge intersections between two sets of bounding boxes. 
 
@@ -220,9 +265,16 @@ def get_intersections(box1_edge, box2_edge):
         tf.Tensor with a list of intersections (or zeros for no intersection) between each edge, of
         the two boxes.
     """
-    print("-" * 15)
-    print("Get Intersections Function Start:")
-    print(f"inputs:\nbox1_edge: {box1_edge.shape}, {box1_edge.dtype}\nbox2_edge: {box2_edge.shape}, {box2_edge.dtype}")
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("-" * 15)
+        print("Get Intersections Function Start:")
+        print(f"inputs:\nbox1_edge: {box1_edge.shape}, {box1_edge.dtype}\nbox2_edge: {box2_edge.shape}, {box2_edge.dtype}")
+    # ------------------------------
+    # Get Intersections Function
+    # ------------------------------
     edge_a = box1_edge[..., 0:1, :, :]
     edge_b = box2_edge[..., :, :, :]
     x1 = edge_a[..., 0:1, 0:1]
@@ -254,17 +306,23 @@ def get_intersections(box1_edge, box2_edge):
     ynum = (x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)
     x_i = tf.math.divide_no_nan(xnum, denom)
     y_i = tf.math.divide_no_nan(ynum, denom)
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("Get Intersections Function End:")
+        print(f"output: {tf.multiply(tf.squeeze(tf.stack([x_i, y_i], axis=-3), axis=[-2, -1]), mask).shape}")
+        print("-" * 15)
+
     # Finish by using the mask to multiply any intersections that didn't fall along the segments
     # by zero and all the ones that did by one.
-    print("Get Intersections Function End:")
-    print(f"output: {tf.multiply(tf.squeeze(tf.stack([x_i, y_i], axis=-3), axis=[-2, -1]), mask).shape}")
-    print("-" * 15)
     return tf.multiply(tf.squeeze(tf.stack([x_i, y_i], axis=-3), axis=[-2, -1]), mask)
 
 def construct_intersection_vertices(labels,
                                     anchors,
                                     xdivs:int=12,
                                     ydivs:int=9, 
+                                    debug:bool=False,
                                     **kwargs) -> TensorLike:
     """
     This function organizes the process of finding all points of the intersection between bounding
@@ -280,29 +338,47 @@ def construct_intersection_vertices(labels,
         So you would just concat the labels from (x, 108, 108, 4, 2) into (x, 108, 324, 4, 2). Just
         'drop' it on itself for each anchor box.
     """
-    print("-" * 30)
-    print("Construct_Intersection Points Function Start:")
-    print(f"inputs:\nlabels: {labels.shape}, {labels.dtype}\nanchors: {anchors.shape}, {anchors.dtype}")
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("-" * 30)
+        print("Construct_Intersection Points Function Start:")
+        print(f"inputs:\nlabels: {labels.shape}, {labels.dtype}\nanchors: {anchors.shape}, {anchors.dtype}")
+
     pumps = anchors.shape[1] // (xdivs * ydivs)
     label_corners, anchor_corners = get_corners(labels), get_corners(anchors)
     label_edges, anchor_edges = get_edges(label_corners), get_edges(anchor_corners)
     inner_points = find_inner_points([label_corners, label_edges], [anchor_corners, anchor_edges], num_pumps=pumps)
-    if tf.rank(inner_points) == tf.rank(labels):
+    print(f"inner_points: {inner_points.shape}, {len(inner_points.shape)} ")
+    print(f"labels: {labels.shape} {len(labels.shape)}")
+    if len(inner_points.shape) == len(labels.shape):
         box_exists = tf.reshape(labels[..., 13:14], labels.shape[:2] + (labels.shape[2] * labels.shape[3], 1))
     else:
         box_exists = labels[..., 13:14]
-    print(f"inner_points: {inner_points.shape} | {box_exists.shape} < box_exists")
-    dif = tf.rank(inner_points) - tf.rank(box_exists)
-    dif = tf.constant([1], shape=(dif,), dtype=tf.int32)
-    print(dif)
-    box_exists = tf.reshape(box_exists, box_exists.shape[:2] + box_exists.shape[2:] + tuple(dif))
-    print(f"inner_points: {inner_points.shape} | {box_exists.shape} < box_exists")
-    inner_points = inner_points * box_exists
+    dif = len(inner_points.shape) - len(box_exists.shape)
+    dif = tf.TensorShape([1 for x in range(dif)])
 
-    intersection_points = find_intersection_points(label_edges, anchor_edges, num_pumps=pumps)
+    if debug:
+        print(f"inner_points: {inner_points.shape} | {box_exists.shape} < box_exists")
+        print(f"dif: {dif}")
+    box_exists = tf.reshape(box_exists, box_exists.shape[:2] + box_exists.shape[2:] + dif)
+
+    if debug:
+        print(f"inner_points: {inner_points.shape} | {box_exists.shape} < box_exists")
+
+    inner_points = inner_points * box_exists
+    intersection_points = find_intersection_points(label_edges, anchor_edges, num_pumps=pumps, **kwargs)
+    if debug:
+        result = tf.concat([intersection_points, inner_points], axis=-2), label_corners, anchor_corners
+        print("Construct_Intersection Points Function End:")
+        print(f"output: {result[0].shape}")
+        print("-" * 30)
+        return result
+
     return  tf.concat([intersection_points, inner_points], axis=-2), label_corners, anchor_corners
 
-def find_inner_points(label:list, anchors:list, **kwargs):
+def find_inner_points(label:list, anchors:list, debug:bool=False, **kwargs):
     """
     Takes a set of bounding box corners and the edges from a rectangle and returns the corner point
     if it is inside the egdes of the shape.
@@ -315,10 +391,15 @@ def find_inner_points(label:list, anchors:list, **kwargs):
     Returns:
         tf.Tensor object of shape (B, M, M) + (4, 2)
     """
-    print("-" * 15)
-    print("Find Inner Points Function Start")
-    print(f"inputs:\nlabels:\ncorners: {label[0].shape}, edges: {label[1].shape}")
-    print(f"anchors:\ncorners: {anchors[0].shape}, edges: {anchors[1].shape}")
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("-" * 15)
+        print("Find Inner Points Function Start")
+        print(f"inputs:\nlabels:\ncorners: {label[0].shape}, edges: {label[1].shape}")
+        print(f"anchors:\ncorners: {anchors[0].shape}, edges: {anchors[1].shape}")
+
     label_corners, label_edges = label[0], label[1]
     anchor_corners, anchor_edges = anchors[0], anchors[1]
     # ----------
@@ -342,19 +423,21 @@ def find_inner_points(label:list, anchors:list, **kwargs):
 
     label_edges = tf.expand_dims(label_edges, axis=-4)
     anchor_edges = tf.expand_dims(anchor_edges, axis=-4)
-    # -----
-    # Temporary Sections for Debugging
-    result = tf.concat([is_inside(label_corners, anchor_edges), 
-                      is_inside(anchor_corners, label_edges)], axis=-2)
-    print("Find Inner Points Function End:")
-    print(f"outputs: {result.shape}, {result.dtype}")
-    print("-" * 15)
-    # End Temp Section
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        result = tf.concat([is_inside(label_corners, anchor_edges), 
+                            is_inside(anchor_corners, label_edges)], axis=-2)
+        print("Find Inner Points Function End:")
+        print(f"outputs: {result.shape}, {result.dtype}")
+        print("-" * 15)
+        return result
     # ------
     return tf.concat([is_inside(label_corners, anchor_edges), 
                       is_inside(anchor_corners, label_edges)], axis=-2)
 
-def is_inside(corners:TensorLike, box_edges:TensorLike) -> TensorLike:
+def is_inside(corners:TensorLike, box_edges:TensorLike, debug:bool=False) -> TensorLike:
     """
     Determines whether a point falls inside the edges of a convex shape by determining which side
     of each edge the point falls along moving clockwise along the edges.
@@ -363,9 +446,14 @@ def is_inside(corners:TensorLike, box_edges:TensorLike) -> TensorLike:
         tf.Tensor object containing points that are fall inside the shape, and zeros out all points
         that do not.
     """
-    print("-" * 15)
-    print("Is Inside Start:")
-    print(f"inputs:\ncorners: {corners.shape}, {corners.dtype}\nbox_edges: {box_edges.shape}, {box_edges.dtype}")
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("-" * 15)
+        print("Is Inside Start:")
+        print(f"inputs:\ncorners: {corners.shape}, {corners.dtype}\nbox_edges: {box_edges.shape}, {box_edges.dtype}")
+
     # Gets the x, y coordinates for the first corner point in the each corner set of the tensor.
     x = corners[..., 0:1, 0:1]
     y = corners[..., 0:1, 1:]
@@ -381,25 +469,38 @@ def is_inside(corners:TensorLike, box_edges:TensorLike) -> TensorLike:
     #
     # This determines which side of the line the point is on moving along the edges clockwise.
     dir = (y - y_i) * (x_j - x_i) - (x - x_i) * (y_j - y_i)
-    left = tf.greater(dir, 0)
-    right = tf.less(dir, 0)
+    left = tf.cast(tf.greater(dir, 0), dtype=tf.bool)
+    right = tf.cast(tf.less(dir, 0), dtype=tf.bool)
 
     # This returns 1 if the point is on the same side of all the edges; 0 if it is not.
-    check = tf.cast(tf.reduce_all(tf.logical_not(left, right), axis=-2), dtype=tf.float32)
+    check = tf.cast(tf.reduce_all(tf.not_equal(left, right), axis=-2), dtype=tf.float32)
+    # check = tf.cast(tf.reduce_all(tf.logical_not(left, right), axis=-2), dtype=tf.float32)
     # Zero out the points not inside the shape.
     corners = tf.squeeze(corners[..., 0:1, :], axis=-2)
-    print("Is Inside End:")
-    print(f"output: {tf.multiply(tf.cast(corners, dtype=tf.float32), check).shape}")
-    print("-" * 15)
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        result = tf.multiply(tf.cast(corners, dtype=tf.float32), check)
+        print("Is Inside End:")
+        print(f"output: {result}")
+        print("-" * 15)
+        return result
+
     return tf.multiply(tf.cast(corners, dtype=tf.float32), check)
 
-def intersection_area(intersection_points:TensorLike) -> TensorLike:
+def intersection_area(intersection_points:TensorLike, debug:bool=False, **kwargs) -> TensorLike:
     """
     Function that takes a set of intersection points and returns a set of the areas.
     """
-    print("-" * 15)
-    print("Intersection Area Function Start:")
-    print(f"input:\nintersection_points: {intersection_points.shape}, {intersection_points.dtype}")
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("-" * 15)
+        print("Intersection Area Function Start:")
+        print(f"input:\nintersection_points: {intersection_points.shape}, {intersection_points.dtype}")
+
     nonzero = tf.cast(intersection_points > 0, dtype=tf.float32)
     mask = tf.cast(intersection_points > 0, dtype=tf.bool)
 
@@ -416,11 +517,12 @@ def intersection_area(intersection_points:TensorLike) -> TensorLike:
     # order the points by their angle. The transpose here was necessary reordering the points. So
     # for a few steps the x and y values are not paired in the last axis of the tensor but remain
     # linked by their shared index in the ordering.
-    shape_dim_flip = tf.concat([tf.zeros((tf.rank(point_angle)-2,), dtype=tf.int32), tf.constant([1, -1], dtype=tf.int32)], axis=0)
-    print(f"shape_dim_flip: {shape_dim_flip}")
-    print(f"point_angle: {point_angle.shape}")
-    shape_dim_flip = tf.constant(tf.range(tf.rank(point_angle), dtype=tf.int32)) + shape_dim_flip
-    print(f"shape_dim_flip: {shape_dim_flip}")
+    shape_dim_flip = tf.constant([0], shape=(len(point_angle.shape)-2,), dtype=tf.int32)
+    shape_dim_flip = tf.concat([shape_dim_flip, tf.constant([1, -1], dtype=tf.int32)], axis=0)
+    # print(f"shape_dim_flip: {shape_dim_flip}")
+    # print(f"point_angle: {point_angle.shape}")
+    shape_dim_flip = tf.range(len(point_angle.shape), dtype=tf.int32) + shape_dim_flip
+    # print(f"shape_dim_flip: {shape_dim_flip}")
     point_indices = tf.argsort(tf.transpose(point_angle, perm=shape_dim_flip), direction="DESCENDING", axis=-1)
     # just transposing the points to match the ordered indexes
     points_T = tf.transpose(intersection_points, shape_dim_flip)
@@ -476,21 +578,39 @@ def intersection_area(intersection_points:TensorLike) -> TensorLike:
     # find the area of each triangle using the determinant and then sum them to find the area of
     # intersection.
     triangle_areas = tf.abs(tf.divide(tf.linalg.det(tf.concat([triangle_points, ones], axis=-1)), 2))
-    print("Intersection Area Function End:")
-    print(f'output: {tf.reduce_sum(triangle_areas, axis=-1, name="intersection_areas").shape}')
-    print("-" * 15)
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        result = tf.reduce_sum(triangle_areas, axis=-1, name="intersection_areas")
+        print("Intersection Area Function End:")
+        print(f'output: {tf.reduce_sum(triangle_areas, axis=-1, name="intersection_areas").shape}')
+        print("-" * 15)
+        return result
+
     return tf.reduce_sum(triangle_areas, axis=-1, name="intersection_areas")
 
-def union_area(label_corners, anchor_corners, intersection, **kwargs):
+def union_area(label_corners:TensorLike,
+               anchor_corners:TensorLike,
+               intersection:TensorLike,
+               debug:bool=False,
+               **kwargs):
     """
     Function that takes two tensors of bounding boxes + the intersections between them and returns
     the union between them.
     """
-    print("-" * 15)
-    print("Union Area Start:")
-    print(f"input:\nlabel_corners: {label_corners.shape}, {label_corners.dtype}")
-    print(f"input:\nanchor_corners: {anchor_corners.shape}, {anchor_corners.dtype}")
-    print(f"input:\nintersection: {intersection.shape}, {intersection.dtype}")
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("-" * 15)
+        print("Union Area Start:")
+        print(f"input:\nlabel_corners: {label_corners.shape}, {label_corners.dtype}")
+        print(f"input:\nanchor_corners: {anchor_corners.shape}, {anchor_corners.dtype}")
+        print(f"input:\nintersection: {intersection.shape}, {intersection.dtype}")
+    # -----------------------------------
+    # Union Area Function
+    # -----------------------------------
     if label_corners.shape != anchor_corners.shape:
         label_corners = pump_tensor(label_corners, **kwargs)
         anchor_corners = stretch_tensor(anchor_corners)
@@ -500,24 +620,33 @@ def union_area(label_corners, anchor_corners, intersection, **kwargs):
 
     area1 = tf.abs(tf.linalg.det(tf.concat([box1_points, ones1], axis=-1)))
     area2 = tf.abs(tf.linalg.det(tf.concat([box2_points, ones2], axis=-1)))
-    result = (area1 + area2) - intersection
-    print("Union Area End:")
-    print(f"output: {result.shape}, {result.dtype}")
-    print("-" * 15)
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        result = (area1 + area2) - intersection
+        print("Union Area End:")
+        print(f"output: {result.shape}, {result.dtype}")
+        print("-" * 15)
+        return result
+
     return (area1 + area2) - intersection
 
 def calculate_giou(label_corners:TensorLike,
                    anchor_corners:TensorLike,
                    union:TensorLike,
-                   intersection:TensorLike) -> TensorLike:
-    # ------
-    # Temp Debug Section
-    print("-" * 15)
-    print("GIoU Function Start:")
-    print(f"input:\nlabel_corners: {label_corners.shape}, {label_corners.dtype}")
-    print(f"input:\nanchor_corners: {anchor_corners.shape}, {anchor_corners.dtype}")
-    print(f"input:\nintersection: {intersection.shape}, {intersection.dtype}")
-    print(f"input:\nunion: {union.shape}, {union.dtype}")
+                   intersection:TensorLike,
+                   debug:bool=False) -> TensorLike:
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("-" * 15)
+        print("GIoU Function Start:")
+        print(f"input:\nlabel_corners: {label_corners.shape}, {label_corners.dtype}")
+        print(f"input:\nanchor_corners: {anchor_corners.shape}, {anchor_corners.dtype}")
+        print(f"input:\nintersection: {intersection.shape}, {intersection.dtype}")
+        print(f"input:\nunion: {union.shape}, {union.dtype}")
     # End Debug
     # ----- 
     if label_corners.shape != anchor_corners.shape:
@@ -535,28 +664,34 @@ def calculate_giou(label_corners:TensorLike,
 
     C = tf.squeeze(wh[..., 0:1] * wh[..., 1:])
 
-    result = (intersection / union) - tf.abs(tf.divide(C, union)) / tf.abs(C)
-    # ------
-    # Temp Debug Section
-    print("GIoU Function End:")
-    print(f"output: {result.shape}, {result.dtype}")
-    print("-" * 15)
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        result = (intersection / union) - tf.abs(tf.divide(C, union)) / tf.abs(C)
+        print("GIoU Function End:")
+        print(f"output: {result.shape}, {result.dtype}")
+        print("-" * 15)
+        return result
     # End Debug
     # ----- 
-
     return (intersection / union) - tf.abs(tf.divide(C, union)) / tf.abs(C)
      
 
 
 def stretch_tensor(box_edges):
-    print("-" * 15)
-    print("Stretch Tensor Start:")
-    print(f"input: {box_edges.shape}")
-    print(f"output: {tf.expand_dims(box_edges, axis=1).shape}")
-    print("-" * 15)
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("-" * 15)
+        print("Stretch Tensor Start:")
+        print(f"input: {box_edges.shape}")
+        print(f"output: {tf.expand_dims(box_edges, axis=1).shape}")
+        print("-" * 15)
     return tf.expand_dims(box_edges, axis=1)
 
-def pump_tensor(box_edges, num_cells:int=108, num_pumps:int=3):
+def pump_tensor(box_edges, num_cells:int=108, num_pumps:int=3, debug:bool=False):
     """
     This function takes a bounding box edge tensor (h, grid_x * grid_y, 4, 2) and returns a 
     'pumped-up' version of it to be 'rolled' against another tensor for calculating intersections.
@@ -564,16 +699,25 @@ def pump_tensor(box_edges, num_cells:int=108, num_pumps:int=3):
     Returns:
         NDArray with shape (B, M, 4, 2, 2)
     """
-    print("-" * 15)
-    print("Pump Tensor Function Start:")
-    print(f"inputs:\nbox_edges: {box_edges.shape}, {box_edges.dtype}")
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("-" * 15)
+        print("Pump Tensor Function Start:")
+        print(f"inputs:\nbox_edges: {box_edges.shape}, {box_edges.dtype}")
     batch, num_boxes = box_edges.shape[0:2]
     end = box_edges.shape[2:]
     step1 = np.expand_dims(box_edges, axis=2)
     step2 = np.full((batch, num_boxes, num_cells * num_pumps) + end, step1)
-    print("Pump Tensor Function End:")
-    print(f"output: {step2.shape}, {step2.dtype}")
-    print("-" * 15)
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("Pump Tensor Function End:")
+        print(f"output: {step2.shape}, {step2.dtype}")
+        print("-" * 15)
+
     return step2
 
 def nonmaxsuppresion(labels:TensorLike, anchors:TensorLike) -> TensorLike:
@@ -587,24 +731,32 @@ def nonmaxsuppresion(labels:TensorLike, anchors:TensorLike) -> TensorLike:
     Returns:
         A TensorLike with shape (batch_size, 18, 5)
     """
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print("-" * 60)
+        print(f"NonMaxSuppression Function Start:")
+        print(f"input shapes:\nlabels: {labels.shape}, {labels.dtype}\nanchors: {anchors.shape}, {anchors.dtype}")
     # Step through process of calculating the GIoU for each box in the anchors against each box in
     # the labels.
-    print("-" * 60)
-    print(f"NonMaxSuppression Function Start:")
-    print(f"input shapes:\nlabels: {labels.shape}, {labels.dtype}\nanchors: {anchors.shape}, {anchors.dtype}")
     intersection_points, label_corners, anchor_corners = construct_intersection_vertices(labels, anchors) 
     intersection = intersection_area(intersection_points)
     union = union_area(label_corners, anchor_corners, intersection, num_pumps=9)
     giou = calculate_giou(label_corners, anchor_corners, union, intersection)
-    print(f"giou: {giou.shape}")
  
     # Sort the indices to find the maximum GIoU for each anchor box label pair and the second highest
     # in case of a duplicate, i.e. a single anchor box is returned for more than one of the label
     # bounding boxes.
     sorted = tf.argsort(giou, axis=-1, direction='DESCENDING')
-    print(f"sorted: {sorted.shape}")
     max_boxes = sorted[..., 0:1]
     alt_boxes = sorted[..., 1:2]
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        print(f"giou: {giou.shape}")
+        print(f"sorted: {sorted.shape}")
 
   
     """
@@ -633,12 +785,31 @@ def nonmaxsuppresion(labels:TensorLike, anchors:TensorLike) -> TensorLike:
         This seems to work practically with this dataset, but I guess we'll see.
     """
    
+    # -------------
+    # Debug Section
+    # -------------
+    if debug:
+        # sorted = tf.reshape(sorted, labels.shape[:-1] + (1,))
+        unique_boxes = tf.broadcast_to(tf.expand_dims(sorted, axis=-3), [anchors.shape[0], 18, 18, 972])[..., 0:1]
+        print(f"unique_boxes: {unique_boxes.shape}")
+        unique_boxes = tf.reduce_sum(tf.where(tf.equal(unique_boxes, tf.expand_dims(max_boxes, axis=-2)), 1, 0), axis=-2)
+        print(f"unique_boxes: {unique_boxes.shape}")
+        print(f"labels:       {labels.shape}")
+        unique_boxes = tf.cast(unique_boxes > 1, dtype=tf.float32) * labels[..., 13:14]
+        duplicate_mask = (tf.cumsum(unique_boxes, axis=-2) - unique_boxes) * unique_boxes
+
+        pred_boxes = tf.where(duplicate_mask > 0,
+                              tf.gather(anchors, tf.squeeze(max_boxes), axis=-2, batch_dims=-1),
+                              tf.gather(anchors, tf.squeeze(alt_boxes), axis=-2, batch_dims=-1))
+        result = pred_boxes * labels[..., 13:14]
+        print(f"NonMaxSuppression Function End:")
+        print(f"output: {result.shape}")
+        print("-" * 60)
+        return result
+
     # sorted = tf.reshape(sorted, labels.shape[:-1] + (1,))
     unique_boxes = tf.broadcast_to(tf.expand_dims(sorted, axis=-3), [anchors.shape[0], 18, 18, 972])[..., 0:1]
-    print(f"unique_boxes: {unique_boxes.shape}")
     unique_boxes = tf.reduce_sum(tf.where(tf.equal(unique_boxes, tf.expand_dims(max_boxes, axis=-2)), 1, 0), axis=-2)
-    print(f"unique_boxes: {unique_boxes.shape}")
-    print(f"labels:       {labels.shape}")
     unique_boxes = tf.cast(unique_boxes > 1, dtype=tf.float32) * labels[..., 13:14]
     duplicate_mask = (tf.cumsum(unique_boxes, axis=-2) - unique_boxes) * unique_boxes
 
@@ -648,3 +819,42 @@ def nonmaxsuppresion(labels:TensorLike, anchors:TensorLike) -> TensorLike:
 
     return pred_boxes * labels[..., 13:14]
     
+def calc_best_anchors(y_true:TensorLike, 
+                      pred_bboxes:TensorLike) -> Tuple[TensorLike, TensorLike]:
+    """
+    Function that takes the ground truth boxes, calculates their cell numbers and assigns an
+    anchor/detector to those objects.
+
+    Returns:
+        TensorLike object representing the detectors responsible for each labeled object and a 
+        tensor representing the [cell, detector] addresses for each in the model output.
+    """
+    # ------------------------------
+    # Find Indexes Cells with Objects
+    # ------------------------------
+    true_xy = y_true[..., 14:16]
+    grid_dims = tf.constant([[12, 9]], dtype=tf.float32)
+    cell_num = tf.cast(tf.math.floor(true_xy * grid_dims), dtype=tf.int32)
+    # ------------------------------
+    # Populate a Tensor with the Anchors from those Cells
+    # ------------------------------
+    pred_idx = cell_num[..., 0:1] * 9 + cell_num[..., 1:]
+    pred_anchors = tf.gather_nd(pred_bboxes, pred_idx, batch_dims=1)
+    true_labels = tf.broadcast_to(tf.expand_dims(y_true, axis=-2), shape=pred_anchors.shape[:-1] + (19,))
+    # ------------------------------
+    # Calculate GIoU of the Ground Truth boxes against the Anchor Boxes
+    # ------------------------------
+    intersection_points, label_corners, anchor_corners = construct_intersection_vertices(true_labels, pred_anchors) 
+    intersection = intersection_area(intersection_points)
+    union = union_area(label_corners, anchor_corners, intersection, num_pumps=9)
+    giou = calculate_giou(label_corners, anchor_corners, union, intersection)
+    # ------------------------------
+    # Populate a Tensor with only the Detectors that are Assigned to the Objects
+    # ------------------------------
+    best_idx = tf.argsort(giou, direction="DESCENDING", axis=-1)[..., 0:1]
+    best_idx = tf.concat([pred_idx, best_idx], axis=-1)
+    best_boxes = tf.gather_nd(pred_bboxes, best_idx, batch_dims=1)
+    # ------------------------------
+    # End
+    # ------------------------------
+    return best_boxes, best_idx
