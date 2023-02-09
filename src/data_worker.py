@@ -53,11 +53,11 @@ class LabelWorker:
 
         return images, masks
 
-    def label_list(self, 
-                   xdivs:int=12,
-                   ydivs:int=9,
-                   num_classes:int=13,
-                   sample_size:Union[int, None]=None):
+    def annot_to_tensor(self, 
+                        xdivs:int=12,
+                        ydivs:int=9,
+                        num_classes:int=13,
+                        sample_size:Union[int, None]=None):
 
         if sample_size:
             try:
@@ -92,6 +92,47 @@ class LabelWorker:
             labels = np.concatenate((labels, img_labels), axis=0)
 
         return labels.reshape((labels.shape[0],) + (18, num_classes + 6))
+
+    def annot_to_tuple(self, 
+                       xdivs:int=12,
+                       ydivs:int=9,
+                       num_classes:int=13,
+                       sample_size:Union[int, None]=None):
+
+        if sample_size:
+            try:
+                img_data = self.lookup['img_data'][:sample_size]
+            except IndexError:
+                print(f"That index is out of bounds for your data! Returning the entire set instead.")
+                img_data = self.lookup['img_data']
+        else:
+            img_data = self.lookup['img_data']
+
+        img_ids = [(x['id'], x['file_name']) for x in img_data]
+        coco = self.lookup['coco']
+        output = []
+        for id, file_name in img_ids:
+            # print(f"searching image: {file_name}")
+            annot = coco.getAnnIds(id)
+            output.append(annot)
+            # annot = coco.loadAnns(annot)
+            # # [1, 2, 3, ... 13, Pc, x1, y1, w, h, phi]
+            # img_labels = np.zeros((0, num_classes + 6), dtype=np.float32) 
+            # for entry in annot:
+            #     y1, x1, w, h, phi = self.translate_points(entry['bbox'])
+            #
+            #     cat = entry['category_id']
+            #     label_vec = np.zeros((1, num_classes + 6), dtype=np.float32)
+            #     label_vec[:, 13:] = 1, x1, y1, w, h, phi
+            #     label_vec[:, cat] = 1 
+            #     img_labels = np.concatenate((img_labels, label_vec), axis=0)
+            #
+            # fill = np.zeros((labels.shape[1] - img_labels.shape[0],) + (num_classes + 6,), dtype=np.float32)
+            # img_labels = np.expand_dims(np.concatenate((img_labels, fill), axis=0), axis=0)
+            #
+            # labels.append(img_labels)
+
+        return tuple(output)
 
     def translate_points(self, entry:list):
         """

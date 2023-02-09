@@ -72,7 +72,8 @@ def generate_anchors(labels:NDArray[np.float32],
     Then we're creating the return value by filling an array with the shape of our grid with the
     anchor box values and then assigning the x, y point values for each set of anchor boxes in the
     array to the centerpoints we created in the knudge_coords array."""
-    anchor_box_template = np.full((batch, xdivs, ydivs, boxes_per_cell, 5), centroid_locations)
+    knudge_coords = tf.reshape(knudge_coords, shape=(xdivs, ydivs, knudge_coords.shape[-1]))
+    anchor_box_template = np.full((1, xdivs, ydivs, boxes_per_cell, 5), centroid_locations)
     print(f"anchor_box_template: {anchor_box_template.shape}")
     anchor_box_template[..., 0] = anchor_box_template[..., 0] + knudge_coords[..., 0:1]
     print(f"anchor_box_template: {anchor_box_template.shape}")
@@ -95,7 +96,7 @@ def stack_anchors(anchors:NDArray[np.float32]) -> NDArray:
                      ...,
                      [Xn, Yn, Wn, Hn, An]]
     """ 
-    if len(anchors.shape) > 3:
+    if len(anchors.shape) > 4:
         batch, xdivs, ydivs, num_boxes, units = anchors.shape
         anchors = anchors.reshape((batch, xdivs * ydivs, num_boxes, units))
     else:
@@ -103,7 +104,7 @@ def stack_anchors(anchors:NDArray[np.float32]) -> NDArray:
         xdivs, ydivs, units = anchors.shape
         anchors = anchors.reshape((xdivs * ydivs,) + (units,))
     print(f"units spec1: {units}")
-    size = xdivs * ydivs
+    # size = xdivs * ydivs
     # num_boxes = int((anchors.shape[-1] - 13) / 6)
     print(f"anchors spec1: {anchors.shape}")
     # result = np.reshape(anchors[..., 13:], (batch, size, num_boxes * 6))
@@ -832,6 +833,8 @@ def calc_best_anchors(y_true:TensorLike,
     # ------------------------------
     # Find Indexes Cells with Objects
     # ------------------------------
+    print(f"y_true: {y_true.shape}")
+    print(f"y_pred: {pred_bboxes.shape}")
     true_xy = y_true[..., 14:16]
     grid_dims = tf.constant([[12, 9]], dtype=tf.float32)
     cell_num = tf.cast(tf.math.floor(true_xy * grid_dims), dtype=tf.int32)
@@ -840,6 +843,8 @@ def calc_best_anchors(y_true:TensorLike,
     # ------------------------------
     pred_idx = cell_num[..., 0:1] * 9 + cell_num[..., 1:]
     pred_anchors = tf.gather_nd(pred_bboxes, pred_idx, batch_dims=1)
+    print(f"pred_anchors: {pred_anchors.shape}")
+    print(f"y_true target: {tf.expand_dims(y_true, axis=-2).shape}")
     true_labels = tf.broadcast_to(tf.expand_dims(y_true, axis=-2), shape=pred_anchors.shape[:-1] + (19,))
     # ------------------------------
     # Calculate GIoU of the Ground Truth boxes against the Anchor Boxes

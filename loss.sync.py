@@ -5,6 +5,7 @@ from glob import glob
 from tensorflow.keras.layers import Layer
 from tensorflow.keras.utils import load_img
 
+import math
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.patches import Arrow, Rectangle, Polygon, Circle, PathPatch
@@ -54,10 +55,10 @@ labeler = LabelWorker(data_name='train',
 
 # %%
 num_anchors = 9
-labels = labeler.label_list()[:16]
-anchors = stack_anchors(generate_anchors(labels, boxes_per_cell=num_anchors, random_state=42))
+labels = labeler.annot_to_tensor()
+anchors = generate_anchors(labels, boxes_per_cell=num_anchors, random_state=42)
 label_corners = get_corners(labels, img_width=768, img_height=576)
-anchor_corners = get_corners(anchors)
+anchor_corners = get_corners(anchors, img_width=768, img_height=576)
 label_edges = get_edges(label_corners)
 anchor_edges = get_edges(anchor_corners)
 print(f"labels shape: {labels.shape}")
@@ -75,80 +76,64 @@ max_idx = np.unravel_index(max_idx, (16, 18, 1))
 labels[..., -1:][max_idx]
 
 # %%
-img_data = tf.keras.utils.image_dataset_from_directory('./data/images/train/',
+
+
+
+
+# %%
+class yolo_dataset(tf.keras.utils.Sequence):
+    def __init__(self, x_set, y_set, batch_size):
+        assert x_set.shape[0] == y_set.shape[0]
+        self.x, self.y = x_set, y_set
+        self.batch_size = batch_size
+
+    def __len__(self):
+        return math.ceil(len(self.x) / self.batch_size)
+
+    def __getitem__(self, idx):
+        indices = tf.range(self.x.shape[0], dtype=tf.int64)
+        seed_init = tf.random_uniform_initializer(0, indices[-1], seed=idx)
+        seed = tf.Variable(seed_init(shape=(self.x.shape[0], 3), dtype=tf.int64), trainable=False)
+        shuffled = tf.random_index_shuffle(indices, seed, indices[-1], rounds=4)
+        batch_x = self.x.numpy()[shuffled[:self.batch_size]]
+        batch_y = self.y[shuffled[:self.batch_size]]
+
+        return batch_x, batch_y, shuffled[:self.batch_size]
+
+# %%
+img_data = tf.keras.utils.image_dataset_from_directory('./data/images/train_imgs/train/',
                                                        labels=None,
+                                                       label_mode=None,
                                                        color_mode='rgb',
-                                                       batch_size=16,
                                                        shuffle=False,
+                                                       batch_size=None,
                                                        image_size=(576, 768))
-imgs = img_data.take(1).get_single_element()
-print(f"x: {imgs.shape}, {imgs.dtype}, {tf.size(imgs)}")
+images = []
+for x in img_data.__iter__():
+    images.append(x)
+image_set = tf.stack(images, axis=0)
+print(f"image_set: {image_set.shape}")
+train_datagen = yolo_dataset(image_set, labels, 16)
+
+# %%
+x = tf.keras.layers.Rescaling(1./255)(train_datagen[1][0][0:1])
+x = tf.keras.layers.Conv2D(16, 3, activation='relu', strides=2, padding='same')(x)
+x = tf.keras.layers.Conv2D(32, 3, activation='relu', strides=2, padding='same')(x)
+x = tf.keras.layers.Conv2D(64, 3, activation='relu', strides=2, padding='same')(x)
+x = tf.keras.layers.Conv2D(128, 3, activation='relu', strides=2, padding='same')(x)
+x = tf.keras.layers.Conv2D(128, 3, activation='relu', strides=2, padding='same')(x)
+x = tf.keras.layers.Conv2D(256, 3, activation='relu', strides=2, padding='same')(x)
+# x = tf.keras.layers.Multiply()([x, 0])
+outputs = tf.keras.layers.Dense(19 * 9, activation='softsign')(x)
+# x = tf.keras.layers.Reshape(target_shape=(108, 9, 19))(x)
+# z = tf.keras.layers.Add()([x[..., -5:], tf.reshape(anchors, (1, 108, 9, 5))])
+#
+# # components = BoxCutter(num_classes=13, units=5)(x)
+# # bboxes = AddAnchors(anchors[0])(components[2])
+# outputs = tf.keras.layers.Concatenate(axis=-1)([x[..., -5:], z])
 
 
 # %%
-def get_model(img_size, batch_size):
-    inputs = tf.keras.Input(shape=img_size + (3,))
-    x = tf.keras.layers.Rescaling(1./255)(inputs)
-    x = tf.keras.layers.Conv2D(16, 3, strides=2, padding='same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Conv2D(32, 3, strides=2, padding='same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Conv2D(64, 3, strides=2, padding='same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Conv2D(128, 3, strides=2, padding='same')(x)
-    x = tf.keras.layers.Conv2D(128, 3, strides=2, padding='same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Conv2D(256, 3, strides=2, padding='same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Dense(19 * 9)(x)
-    components = BoxCutter(num_classes=13, units=5)(x)
-    bboxes = AddAnchors(anchors[0])(components[2])
-    components[2] = bboxes
-    outputs = tf.keras.layers.Concatenate(axis=-1)(components)
-    model = Model(inputs, outputs)
-
-    return model
-
-model = get_model(img_size=(576, 768), batch_size=16)
-model.summary()
-
-
-# %%
-def get_model(img_size, batch_size):
-    inputs = tf.keras.Input(shape=img_size + (3,))
-    x = tf.keras.layers.Rescaling(1./255)(inputs)
-    x = tf.keras.layers.Conv2D(16, 3, strides=2, padding='same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Conv2D(32, 3, strides=2, padding='same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Conv2D(64, 3, strides=2, padding='same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Conv2D(128, 3, strides=2, padding='same')(x)
-    x = tf.keras.layers.Conv2D(128, 3, strides=2, padding='same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Conv2D(256, 3, strides=2, padding='same')(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Dense(19 * 9)(x)
-    components = BoxCutter(num_classes=13, units=5)(x)
-    bboxes = AddAnchors(anchors[0])(components[2])
-    components[2] = bboxes
-    outputs = tf.keras.layers.Concatenate(axis=-1)(components)
-    model = Model(inputs, outputs)
-
-    return model
-
-model = get_model(img_size=(576, 768), batch_size=16)
-model.summary()
-
-# %%
-model.compile(optimizer='adam', loss=YOLO_Loss())
-history = model.fit(x, labels,
-                    epochs=10,
-                    batch_size=16)
-
-# %%
-loss = YOLO_Loss()(labels, detectors)
-
 
 # %%
 fig, ax = setup_labels_plot()
@@ -170,3 +155,48 @@ for i in range(18):
     ax.imshow(imgs[0] / 255)
     x += 150
 plt.show()
+
+
+# %%
+# test_arr = tf.zeros((1, 108, 9, 5), dtype=tf.float32)
+# test_val = tf.constant([2], shape=(1,5), dtype=tf.float32)
+# indices = tf.constant([[0, 49, 0]])
+# test_arr = tf.tensor_scatter_nd_add(test_arr, indices, test_val)
+# tf.sigmoid(outputs).numpy().reshape(1, 108, 9, 19)[0, 0, 0, -5:]
+y_preds = outputs.numpy().reshape(1, 108, 9, 19)[..., -5:] + anchors.reshape(1, 108, 9, 5)
+y_corners = get_corners(y_preds, img_width=768, img_height=567)
+print(f"anchors: {anchors[0, 0, 0, 0]}")
+print(f"y_preds: {y_preds[0, 0, 0]}")
+print(f"y_corners: {y_corners.shape}")
+img = train_datagen[1][2][0]
+print(f"img: {img}")
+fig, ax = setup_labels_plot(num_plots=(1, 2))
+ax1 = ax[0]
+ax2 = ax[1]
+# --------------------
+# Object Setup
+# --------------------
+points = tf.reduce_mean(anchor_corners[..., 0:1, :, :], axis=-2)
+y_points = tf.reduce_mean(y_corners[..., 0:1, :, :], axis=-2)
+label_points = tf.reduce_mean(label_corners[img, ..., 0:1, :, :], axis=-2)
+print(f"points: {points.shape}")
+print(f"y_points: {y_points.shape}")
+print(f"label_points: {label_points.shape}")
+points = tf.reshape(points, shape=(1, 108, 1, 2))
+y_points = tf.reshape(y_points, shape=(1, 108, 1, 2))
+# points = tf.transpose(points, perm=(0, 2, 1, 3, 4))
+print(f"points: {points.shape}")
+color_idx = tf.range(108)
+print(f"color_idx: {color_idx.shape}")
+# for i, a in zip(bb_list, itm_list):
+ax2.add_patch(Polygon(y_corners[0, 49, 1], color='springgreen', fill=False))
+ax1.scatter(points[0, ..., 0], points[0, ..., 1], c=color_idx, cmap='jet')
+ax2.scatter(y_points[0, ..., 0], y_points[0, ..., 1], c=color_idx, cmap='jet')
+ax1.imshow(train_datagen[1][0][0] / 255)
+ax2.imshow(train_datagen[1][0][0] / 255)
+plt.show()
+
+
+# %%
+a = tf.constant(tf.range(10, dtype=tf.float32))
+tf.keras.activations.sigmoid(a)

@@ -1,6 +1,8 @@
 import numpy as np
+from typing import Tuple, Union
 import tensorflow as tf
 from tensorflow.types.experimental import TensorLike
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.patches import Arrow, Rectangle, Circle, Polygon
 from matplotlib.collections import PatchCollection, PathCollection, LineCollection
@@ -63,7 +65,7 @@ def display_label(label, color, target_size=(384, 512)):
 
 def intersection_shapes(labels:TensorLike,
                         predictions:TensorLike,
-                        **kwargs) -> tuple[TensorLike, TensorLike]:
+                        **kwargs) -> Tuple[TensorLike, TensorLike]:
     """
     Function that takes a set of intersection points and returns a set of the areas.
     """
