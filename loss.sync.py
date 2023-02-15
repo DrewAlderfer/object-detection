@@ -100,6 +100,7 @@ class yolo_dataset(tf.keras.utils.Sequence):
 
         return batch_x, batch_y, shuffled[:self.batch_size]
 
+
 # %%
 img_data = tf.keras.utils.image_dataset_from_directory('./data/images/train_imgs/train/',
                                                        labels=None,

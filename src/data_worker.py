@@ -6,57 +6,35 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from pycocotools.coco import COCO
 import tensorflow as tf
-from tensorflow.keras.utils import load_img
+from tensorflow.keras.utils import load_img, Sequence
+
 
 from .old.old import make_masks, process_img_annotations, rotate
 
 
-class LabelWorker:
+class LabelWorker(Sequence):
     def __init__(self, 
                  data_name:str,
                  coco_obj:dict,
                  image_path:str,
-                 input_size:Union[Tuple[int, int], NDArray, ArrayLike],
-                 target_size:Union[Tuple[int, int], NDArray, ArrayLike]):
+                 input_size:Tuple[int, int],
+                 target_size:Tuple[int, int],
+                 xy_grid:Tuple[int, int]=(12, 9),
+                 num_classes:int=13,
+                 batch_size:int=16):
 
         self.name = data_name
         self.lookup = coco_obj[self.name]
-        self.X_path = image_path 
+        self.x_path = image_path 
         self.input_size = input_size
         self.target_size = target_size
-
-    def get_masks(self, sample_size:Union[int, None]=None, **kwargs):
-        if sample_size:
-            try:
-                img_data = self.lookup['img_data'][:sample_size]
-            except IndexError:
-                print(f"That index is out of bounds for your data! Returning the entire set instead.")
-                img_data = self.lookup['img_data']
-        else:
-            img_data = self.lookup['img_data']
-
-        img_ids = [(x['id'], x['file_name']) for x in img_data]
-        coco = self.lookup['coco']
-        images = np.empty((0,), dtype=np.float32)
-        masks = np.empty((0,), dtype=np.float32)
-
-        for id, file_name in img_ids:
-            annot = coco.getAnnIds(id)
-            annot = coco.loadAnns(annot)
-            img = np.asarray(load_img(f"{self.X_path}/{self.name}/{file_name}", target_size=self.target_size), dtype=np.float32)
-            mask = make_masks(annot, input_size=self.input_size, target_size=self.target_size, **kwargs)
-            if images.shape == (0,):
-                images = np.empty(((0,) + img.shape), dtype=np.float32)
-                masks = np.empty(((0,) + mask.shape), dtype=np.float32)
-            images = np.append(images, img.reshape((1,) + img.shape), axis=0)
-            masks = np.append(masks, mask.reshape((1,) + mask.shape), axis=0)
-
-        return images, masks
+        self.batch_size = batch_size
+        self.xy_grid = xy_grid
+        self.num_classes = num_classes
+        self.x = self.get_image_set()
+        self.y = self.annot_to_tensor()
 
     def annot_to_tensor(self, 
-                        xdivs:int=12,
-                        ydivs:int=9,
-                        num_classes:int=13,
                         sample_size:Union[int, None]=None):
 
         if sample_size:
@@ -70,69 +48,28 @@ class LabelWorker:
 
         img_ids = [(x['id'], x['file_name']) for x in img_data]
         coco = self.lookup['coco']
-        labels = np.empty((0, 18, num_classes + 6), dtype=np.float32)
+        labels = np.empty((0, 18, self.num_classes + 6), dtype=np.float32)
         for id, file_name in img_ids:
             # print(f"searching image: {file_name}")
             annot = coco.getAnnIds(id)
             annot = coco.loadAnns(annot)
             # [1, 2, 3, ... 13, Pc, x1, y1, w, h, phi]
-            img_labels = np.zeros((0, num_classes + 6), dtype=np.float32) 
+            img_labels = np.zeros((0, self.num_classes + 6), dtype=np.float32) 
             for entry in annot:
                 y1, x1, w, h, phi = self.translate_points(entry['bbox'])
 
                 cat = entry['category_id']
-                label_vec = np.zeros((1, num_classes + 6), dtype=np.float32)
+                label_vec = np.zeros((1, self.num_classes + 6), dtype=np.float32)
                 label_vec[:, 13:] = 1, x1, y1, w, h, phi
                 label_vec[:, cat] = 1 
                 img_labels = np.concatenate((img_labels, label_vec), axis=0)
 
-            fill = np.zeros((labels.shape[1] - img_labels.shape[0],) + (num_classes + 6,), dtype=np.float32)
+            fill = np.zeros((labels.shape[1] - img_labels.shape[0],) + (self.num_classes + 6,), dtype=np.float32)
             img_labels = np.expand_dims(np.concatenate((img_labels, fill), axis=0), axis=0)
 
             labels = np.concatenate((labels, img_labels), axis=0)
 
-        return labels.reshape((labels.shape[0],) + (18, num_classes + 6))
-
-    def annot_to_tuple(self, 
-                       xdivs:int=12,
-                       ydivs:int=9,
-                       num_classes:int=13,
-                       sample_size:Union[int, None]=None):
-
-        if sample_size:
-            try:
-                img_data = self.lookup['img_data'][:sample_size]
-            except IndexError:
-                print(f"That index is out of bounds for your data! Returning the entire set instead.")
-                img_data = self.lookup['img_data']
-        else:
-            img_data = self.lookup['img_data']
-
-        img_ids = [(x['id'], x['file_name']) for x in img_data]
-        coco = self.lookup['coco']
-        output = []
-        for id, file_name in img_ids:
-            # print(f"searching image: {file_name}")
-            annot = coco.getAnnIds(id)
-            output.append(annot)
-            # annot = coco.loadAnns(annot)
-            # # [1, 2, 3, ... 13, Pc, x1, y1, w, h, phi]
-            # img_labels = np.zeros((0, num_classes + 6), dtype=np.float32) 
-            # for entry in annot:
-            #     y1, x1, w, h, phi = self.translate_points(entry['bbox'])
-            #
-            #     cat = entry['category_id']
-            #     label_vec = np.zeros((1, num_classes + 6), dtype=np.float32)
-            #     label_vec[:, 13:] = 1, x1, y1, w, h, phi
-            #     label_vec[:, cat] = 1 
-            #     img_labels = np.concatenate((img_labels, label_vec), axis=0)
-            #
-            # fill = np.zeros((labels.shape[1] - img_labels.shape[0],) + (num_classes + 6,), dtype=np.float32)
-            # img_labels = np.expand_dims(np.concatenate((img_labels, fill), axis=0), axis=0)
-            #
-            # labels.append(img_labels)
-
-        return tuple(output)
+        return labels.reshape((labels.shape[0],) + (18, self.num_classes + 6))
 
     def translate_points(self, entry:list):
         """
@@ -154,6 +91,33 @@ class LabelWorker:
         height = height / self.input_size[0] # * self.target_size[0] / self.input_size[0]
         phi = (phi + np.pi) / (2 * np.pi)
         return row, col, width, height, phi
+    
+    def get_image_set(self):
+        print(f"getting images for {self.name} set:")
+        img_data = tf.keras.utils.image_dataset_from_directory(self.x_path + self.name,
+                                                               labels=None,
+                                                               label_mode=None,
+                                                               color_mode='rgb',
+                                                               shuffle=False,
+                                                               batch_size=None,
+                                                               image_size=self.target_size)
+        images = []
+        for x in img_data.__iter__():
+            images.append(x)
+        return tf.stack(images, axis=0)
+
+    def __len__(self):
+        return math.ceil(len(self.x) / self.batch_size)
+
+    def __getitem__(self, idx):
+        indices = tf.range(self.x.shape[0], dtype=tf.int64)
+        seed_init = tf.random_uniform_initializer(0, indices[-1], seed=idx)
+        seed = tf.Variable(seed_init(shape=(self.x.shape[0], 3), dtype=tf.int64), trainable=False)
+        shuffled = tf.random_index_shuffle(indices, seed, indices[-1], rounds=4)
+        batch_x = self.x.numpy()[shuffled[:self.batch_size]]
+        batch_y = self.y[shuffled[:self.batch_size]]
+
+        return batch_x, batch_y, shuffled[:self.batch_size]
 
 def init_COCO(json_path:str, divs:List[str]):
 
