@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from typing import List, Union, Tuple
 
+import math
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from pycocotools.coco import COCO
@@ -12,7 +13,7 @@ from tensorflow.keras.utils import load_img, Sequence
 from .old.old import make_masks, process_img_annotations, rotate
 
 
-class LabelWorker(Sequence):
+class YOLODataset(Sequence):
     def __init__(self, 
                  data_name:str,
                  coco_obj:dict,
@@ -33,6 +34,7 @@ class LabelWorker(Sequence):
         self.num_classes = num_classes
         self.x = self.get_image_set()
         self.y = self.annot_to_tensor()
+        self.epoch_mod = 0
 
     def annot_to_tensor(self, 
                         sample_size:Union[int, None]=None):
@@ -106,18 +108,41 @@ class LabelWorker(Sequence):
             images.append(x)
         return tf.stack(images, axis=0)
 
+    def on_epoch_end(self):
+        self.epoch_mod += len(self)
+
     def __len__(self):
         return math.ceil(len(self.x) / self.batch_size)
 
     def __getitem__(self, idx):
+        idx =  idx + self.epoch_mod
         indices = tf.range(self.x.shape[0], dtype=tf.int64)
         seed_init = tf.random_uniform_initializer(0, indices[-1], seed=idx)
         seed = tf.Variable(seed_init(shape=(self.x.shape[0], 3), dtype=tf.int64), trainable=False)
         shuffled = tf.random_index_shuffle(indices, seed, indices[-1], rounds=4)
-        batch_x = self.x.numpy()[shuffled[:self.batch_size]]
-        batch_y = self.y[shuffled[:self.batch_size]]
+        batch_x = self.x.numpy()[shuffled[:self.batch_size], ...]
+        batch_y = self.y[shuffled[:self.batch_size], ...]
+        # print(f"X shape: {batch_x.shape}")
+        # print(f"batch indices:\n{shuffled[:self.batch_size]}")
+        # print(f"y shape: {batch_y.shape}")
 
-        return batch_x, batch_y, shuffled[:self.batch_size]
+        return batch_x, batch_y    
+
+    # def __iter__(self):
+    #     print(f"calling from iterator")
+    #     for batch in range(len(self)):
+    #         idx =  batch + self.epoch_mod
+    #         indices = tf.range(self.x.shape[0], dtype=tf.int64)
+    #         seed_init = tf.random_uniform_initializer(0, indices[-1], seed=idx)
+    #         seed = tf.Variable(seed_init(shape=(self.x.shape[0], 3), dtype=tf.int64), trainable=False)
+    #         shuffled = tf.random_index_shuffle(indices, seed, indices[-1], rounds=4)
+    #         batch_x = self.x.numpy()[shuffled[:self.batch_size], ...]
+    #         batch_y = self.y[shuffled[:self.batch_size], ...]
+    #         # print(f"X shape: {batch_x.shape}")
+    #         # print(f"batch indices:\n{shuffled[:self.batch_size]}")
+    #         # print(f"y shape: {batch_y.shape}")
+    #
+    #         yield batch_x, batch_y
 
 def init_COCO(json_path:str, divs:List[str]):
 

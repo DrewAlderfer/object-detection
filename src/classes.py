@@ -285,21 +285,3 @@ class CategoricalDataGen:
                     break
             yield batch_X, batch_y
 
-class yolo_dataset(tf.keras.utils.Sequence):
-    def __init__(self, x_set, y_set, batch_size):
-        assert x_set.shape[0] == y_set.shape[0]
-        self.x, self.y = x_set, y_set
-        self.batch_size = batch_size
-
-    def __len__(self):
-        return math.ceil(len(self.x) / self.batch_size)
-
-    def __getitem__(self, idx):
-        indices = tf.range(self.x.shape[0], dtype=tf.int64)
-        seed_init = tf.random_uniform_initializer(0, indices[-1], seed=idx)
-        seed = tf.Variable(seed_init(shape=(self.x.shape[0], 3), dtype=tf.int64), trainable=False)
-        shuffled = tf.random_index_shuffle(indices, seed, indices[-1], rounds=4)
-        batch_x = self.x.numpy()[shuffled[:self.batch_size]]
-        batch_y = self.y[shuffled[:self.batch_size]]
-
-        return batch_x, batch_y, shuffled[:self.batch_size]

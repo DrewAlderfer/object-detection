@@ -19,13 +19,14 @@ from tensorflow.keras import Model
 from tensorflow.types.experimental import TensorLike
 
 from src.classes import CategoricalDataGen
-from src.data_worker import LabelWorker, init_COCO
+from src.data_worker import YOLODataset, init_COCO
 from src.utils import *
 from src.models.layers import *
 from src.models.models import YOLO_Loss
 from src.disviz import setup_labels_plot
 
 # %%
+np.set_printoptions(suppress=True, precision=4)
 # %load_ext autoreload
 
 # %%
@@ -47,11 +48,15 @@ images = sorted(glob("./data/images/train/*"))
 data = init_COCO("./data/", ['train', 'val', 'test'])
 
 # %%
-labeler = LabelWorker(data_name='train',
+labeler = YOLODataset(data_name='train',
                       coco_obj=data,
                       image_path='./data/images/',
                       input_size=(1440, 1920),
                       target_size=(576, 768))
+
+# %%
+len(labeler)
+labeler[20][0].shape
 
 # %%
 num_anchors = 9
@@ -68,53 +73,9 @@ print(f"anchors shape: {anchors.shape}")
 print(f"anchor_corners shape: {anchor_corners.shape}")
 print(f"anchor_edges shape: {anchor_edges.shape}")
 
-# %%
-arr = labels[..., -1:].flat
-max_idx = tf.argsort(arr, direction="DESCENDING")
-max_idx = np.unravel_index(max_idx, (16, 18, 1))
-
-labels[..., -1:][max_idx]
 
 # %%
-
-
-
-
-# %%
-class yolo_dataset(tf.keras.utils.Sequence):
-    def __init__(self, x_set, y_set, batch_size):
-        assert x_set.shape[0] == y_set.shape[0]
-        self.x, self.y = x_set, y_set
-        self.batch_size = batch_size
-
-    def __len__(self):
-        return math.ceil(len(self.x) / self.batch_size)
-
-    def __getitem__(self, idx):
-        indices = tf.range(self.x.shape[0], dtype=tf.int64)
-        seed_init = tf.random_uniform_initializer(0, indices[-1], seed=idx)
-        seed = tf.Variable(seed_init(shape=(self.x.shape[0], 3), dtype=tf.int64), trainable=False)
-        shuffled = tf.random_index_shuffle(indices, seed, indices[-1], rounds=4)
-        batch_x = self.x.numpy()[shuffled[:self.batch_size]]
-        batch_y = self.y[shuffled[:self.batch_size]]
-
-        return batch_x, batch_y, shuffled[:self.batch_size]
-
-
-# %%
-img_data = tf.keras.utils.image_dataset_from_directory('./data/images/train_imgs/train/',
-                                                       labels=None,
-                                                       label_mode=None,
-                                                       color_mode='rgb',
-                                                       shuffle=False,
-                                                       batch_size=None,
-                                                       image_size=(576, 768))
-images = []
-for x in img_data.__iter__():
-    images.append(x)
-image_set = tf.stack(images, axis=0)
-print(f"image_set: {image_set.shape}")
-train_datagen = yolo_dataset(image_set, labels, 16)
+print(f"training set:\ninputs: {labeler[0][0].shape}\nlabels: {labeler[0][1].shape}")
 
 # %%
 x = tf.keras.layers.Rescaling(1./255)(train_datagen[1][0][0:1])

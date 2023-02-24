@@ -11,7 +11,7 @@ from tensorflow.types.experimental import TensorLike
 from ..utils import calc_best_anchors
 
 class YOLO_Loss(tf.keras.losses.Loss):
-    def __init__(self, lamb_coord=.5, lamb_phi=np.pi*5, lamb_noobj=.5, name="yolo_loss"):
+    def __init__(self, lamb_coord=.5, lamb_phi=.2, lamb_noobj=.5, name="yolo_loss"):
         super().__init__(name=name)
         self.lamb_coord = lamb_coord
         self.lamb_phi = lamb_phi
@@ -25,6 +25,8 @@ class YOLO_Loss(tf.keras.losses.Loss):
         p_class = y_pred[..., :13]
         p_obj = y_pred[..., 13:14]
         p_bboxes = y_pred[..., 14:]
+        # print(f"y_true: {y_true.shape}")
+        # print(f"p_bboxes: {p_bboxes.shape}")
         p_bestboxes, detector_idx = calc_best_anchors(y_true, p_bboxes)
         # ------------------------------
         # Scatter True Values into a Tensor shape: 
@@ -61,6 +63,9 @@ class YOLO_Loss(tf.keras.losses.Loss):
         p_wh = p_bestboxes[..., 2:4]
         p_phi = p_bestboxes[..., -1:]
 
+        # print(f"t_wh: {t_wh.shape}, {t_wh.dtype}\n{t_wh[0]}")
+        # print(f"p_wh: {p_wh.shape}, {p_wh.dtype}\n{p_wh[0]}")
+
         sq_dif = tf.math.squared_difference
         # ------------------------------
         # XY, WH, Angle Loss
@@ -77,5 +82,12 @@ class YOLO_Loss(tf.keras.losses.Loss):
         # Class Loss
         # ------------------------------
         class_loss = tf.reduce_sum(tf.reduce_sum(sq_dif(t_class, p_class), axis=-1) * t_obj, axis=[-1, -2])
+
+        # print(f"xy_loss: {xy_loss}")
+        # print(f"wh_loss: {wh_loss}")
+        # print(f"phi_loss: {phi_loss}")
+        # print(f"conf_loss: {conf_loss}")
+        # print(f"noobj_loss: {noobj_loss}")
+        # print(f"class_loss: {class_loss}")
 
         return xy_loss + wh_loss + phi_loss + conf_loss + noobj_loss + class_loss

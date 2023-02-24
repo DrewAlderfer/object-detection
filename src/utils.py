@@ -169,7 +169,7 @@ def get_corners(box_vectors:NDArray[np.float32],
     centered = tf.subtract(corner_points, center_point) 
 
     # Set up the rotation matrix tensor
-    print(f"phi: {phi.shape}")
+    # print(f"phi: {phi.shape}")
     cos, sin = tf.cos(phi), tf.sin(phi)
     R = tf.stack([tf.concat([cos, -sin], axis=-1),
                   tf.concat([sin, cos], axis=-1)], axis=-2)
@@ -351,8 +351,8 @@ def construct_intersection_vertices(labels,
     label_corners, anchor_corners = get_corners(labels), get_corners(anchors)
     label_edges, anchor_edges = get_edges(label_corners), get_edges(anchor_corners)
     inner_points = find_inner_points([label_corners, label_edges], [anchor_corners, anchor_edges], num_pumps=pumps)
-    print(f"inner_points: {inner_points.shape}, {len(inner_points.shape)} ")
-    print(f"labels: {labels.shape} {len(labels.shape)}")
+    # print(f"inner_points: {inner_points.shape}, {len(inner_points.shape)} ")
+    # print(f"labels: {labels.shape} {len(labels.shape)}")
     if len(inner_points.shape) == len(labels.shape):
         box_exists = tf.reshape(labels[..., 13:14], labels.shape[:2] + (labels.shape[2] * labels.shape[3], 1))
     else:
@@ -833,8 +833,8 @@ def calc_best_anchors(y_true:TensorLike,
     # ------------------------------
     # Find Indexes Cells with Objects
     # ------------------------------
-    print(f"y_true: {y_true.shape}")
-    print(f"y_pred: {pred_bboxes.shape}")
+    # print(f"y_true: {y_true.shape}")
+    # print(f"y_pred: {pred_bboxes.shape}")
     true_xy = y_true[..., 14:16]
     grid_dims = tf.constant([[12, 9]], dtype=tf.float32)
     cell_num = tf.cast(tf.math.floor(true_xy * grid_dims), dtype=tf.int32)
@@ -843,8 +843,8 @@ def calc_best_anchors(y_true:TensorLike,
     # ------------------------------
     pred_idx = cell_num[..., 0:1] * 9 + cell_num[..., 1:]
     pred_anchors = tf.gather_nd(pred_bboxes, pred_idx, batch_dims=1)
-    print(f"pred_anchors: {pred_anchors.shape}")
-    print(f"y_true target: {tf.expand_dims(y_true, axis=-2).shape}")
+    # print(f"pred_anchors: {pred_anchors.shape}")
+    # print(f"y_true target: {tf.expand_dims(y_true, axis=-2).shape}")
     true_labels = tf.broadcast_to(tf.expand_dims(y_true, axis=-2), shape=pred_anchors.shape[:-1] + (19,))
     # ------------------------------
     # Calculate GIoU of the Ground Truth boxes against the Anchor Boxes
