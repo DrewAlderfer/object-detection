@@ -91,3 +91,98 @@ class YOLO_Loss(tf.keras.losses.Loss):
         # print(f"class_loss: {class_loss}")
 
         return xy_loss + wh_loss + phi_loss + conf_loss + noobj_loss + class_loss
+
+def YOLO_convnet(img_size):
+    inputs = tf.keras.Input(shape=img_size + (3,))
+    x = tf.keras.layers.Rescaling(2./255)(inputs)
+
+    x = tf.keras.layers.Conv2D(filters=16, kernel_size=7, use_bias=False)(x)
+    for size in [32, 64, 128, 256, 513, 1026]:
+        residual = x
+
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.Activation('relu')(x)
+        x = tf.keras.layers.SeparableConv2D(size, 3, padding='same', use_bias=False)(x)
+
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.Activation('relu')(x)
+        x = tf.keras.layers.SeparableConv2D(size, 3, padding='same', use_bias=False)(x)
+
+        x = tf.keras.layers.MaxPooling2D(3, strides=2, padding='same')(x)
+
+        residual = tf.keras.layers.Conv2D(
+            size, 1, strides=2, padding='same', use_bias=False)(residual)
+        x = tf.keras.layers.add([x, residual]) 
+
+    # x = tf.keras.layers.Flatten()(x)
+    print(f"ConvNet Output: {x.shape}")
+    # x = tf.keras.layers.Dropout(.5)(x)     
+    x = tf.keras.layers.Dense(19 * 9, activation='sigmoid')(x)
+    x = tf.keras.layers.Reshape(target_shape=(108, 9, 19))(x)
+    # print(f"x: {x.shape}")
+    # bb_x = x[..., -5:]
+    # print(f"anchors: {anchors.shape}")
+    # print(f"bb_x: {bb_x.shape}")
+    # bb_x = tf.keras.layers.Add()([bb_x, anchors])
+
+    # outputs = tf.keras.layers.Concatenate(axis=-1)([x[..., :-5], bb_x])
+    outputs = x
+    model = tf.keras.Model(inputs, outputs, name='convnet')
+
+    return model
+
+class YOLO(tf.keras.Model):
+    def __init__(self, convnet, anchors, **kwargs):
+        super().__init__(**kwargs)
+        self.convnet = convnet
+        self.anchors = anchors
+
+    @tf.function
+    def train_step(self, input):
+        x, y = input
+        # # print(f"\nx shape: {x.shape}")
+        # print(f"\ny shape: {y.shape}")
+        with tf.GradientTape() as tape:
+            # print(f"\nx shape: {x.shape}")
+            preds = self.convnet(x, training=True)
+            anchors_base = tf.zeros(shape=(1,) + preds.shape[1:-1]
+                               + (preds.shape[-1] - self.anchors.shape[-1],),
+                               dtype=tf.float32) 
+            anchor_vals = tf.keras.layers.Concatenate(axis=-1)([anchors_base, self.anchors])
+            anchor_vals = tf.broadcast_to(anchor_vals, shape=preds.shape)
+            anchor_zeros = tf.zeros(shape=preds.shape)
+            anchors = tf.keras.layers.Add()([anchor_zeros, anchor_vals])
+            preds = tf.keras.layers.Add()([preds, anchors])
+            loss = self.compiled_loss(y, preds, regularization_losses=self.losses)
+        grads = tape.gradient(loss, self.trainable_weights)
+        self.optimizer.apply_gradients(zip(grads, self.trainable_weights)) 
+        return {"loss": loss}
+    
+    @tf.function
+    def test_step(self, data):
+        x, y = data
+        preds = self.convnet(x, training=False)
+        anchors_base = tf.zeros(shape=(1,) + preds.shape[1:-1]
+                            + (preds.shape[-1] - self.anchors.shape[-1],),
+                            dtype=tf.float32) 
+        anchor_vals = tf.keras.layers.Concatenate(axis=-1)([anchors_base, self.anchors])
+        anchor_vals = tf.broadcast_to(anchor_vals, shape=preds.shape)
+        anchor_zeros = tf.zeros(shape=preds.shape)
+        anchors = tf.keras.layers.Add()([anchor_zeros, anchor_vals])
+        preds = tf.keras.layers.Add()([preds, anchors])
+        loss = self.compiled_loss(y, preds, regularization_losses=self.losses)
+        return {"loss": loss}
+
+    @tf.function
+    def predict(self, data):
+        preds = self.convnet(data, training=False)
+        anchors_base = tf.zeros(shape=(1,) + preds.shape[1:-1]
+                            + (preds.shape[-1] - self.anchors.shape[-1],),
+                            dtype=tf.float32) 
+        anchor_vals = tf.keras.layers.Concatenate(axis=-1)([anchors_base, self.anchors])
+        anchor_vals = tf.broadcast_to(anchor_vals, shape=preds.shape)
+        anchor_zeros = tf.zeros(shape=preds.shape)
+        anchors = tf.keras.layers.Add()([anchor_zeros, anchor_vals])
+        preds = tf.keras.layers.Add()([preds, anchors])
+
+        return preds
