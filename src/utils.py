@@ -454,7 +454,6 @@ def is_inside(corners:TensorLike, box_edges:TensorLike, debug:bool=False) -> Ten
         print("-" * 15)
         print("Is Inside Start:")
         print(f"inputs:\ncorners: {corners.shape}, {corners.dtype}\nbox_edges: {box_edges.shape}, {box_edges.dtype}")
-
     # Gets the x, y coordinates for the first corner point in the each corner set of the tensor.
     x = corners[..., 0:1, 0:1]
     y = corners[..., 0:1, 1:]
@@ -709,8 +708,8 @@ def pump_tensor(box_edges, num_cells:int=108, num_pumps:int=3, debug:bool=False)
         print(f"inputs:\nbox_edges: {box_edges.shape}, {box_edges.dtype}")
     batch, num_boxes = box_edges.shape[0:2]
     end = box_edges.shape[2:]
-    step1 = np.expand_dims(box_edges, axis=2)
-    step2 = np.full((batch, num_boxes, num_cells * num_pumps) + end, step1)
+    step1 = tf.expand_dims(box_edges, axis=2)
+    step2 = tf.fill(dims=(batch, num_boxes, num_cells * num_pumps) + end, value=step1)
     # -------------
     # Debug Section
     # -------------
