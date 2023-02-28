@@ -1,4 +1,5 @@
 import os
+from glob import glob
 from pathlib import Path
 from typing import List, Union, Tuple
 
@@ -161,3 +162,110 @@ def init_COCO(json_path:str, divs:List[str]):
                                 "annotations": db.loadAnns(annIds)}
                        })
     return result
+
+class DarknetTools:
+    def __init__(self, data:list, image_size:List[int], project_directory:str, make:bool=False):
+        self.data = data
+        self.image_size = image_size
+        self.project_dir = self._check_path(project_directory)
+        self.image_paths = self._image_paths()
+        self.img_files = self._img_files()
+        self.labels = self._annot_to_darknet()
+        if make:
+            self._create_project()
+
+    def _image_paths(self):
+        result = []
+        for subset in self.data:
+            result.append(os.path.abspath(subset.x_path) + "/" + subset.name)
+        return result
+
+    def _check_path(self, path):
+        assert isinstance(path, str)
+
+        if path.endswith('/'):
+            path = path[:-1]
+            return path
+        else:
+            return path
+
+    def _create_project(self):
+        if not os.path.exists(self.project_dir):
+            os.mkdir(self.project_dir)
+            os.mkdir(self.project_dir + "/obj")
+            print(f"created project directory at:\n{self.project_dir}")
+
+    def _img_files(self):
+        results = [] 
+        for idx, search_path in enumerate(self.image_paths):
+            filenames = np.char.asarray(np.char.split(sorted(glob(search_path + "/*.png")), '/'), unicode=True)
+            results.append(np.char.rstrip(filenames[..., -1], '.png'))
+
+        return results
+
+    def _annot_to_darknet(self, image_size:List[int]=[768, 576]):
+        """
+        Function that takes a YOLO_Dataset object and returns a tensor containing darknet formatted
+        values.
+        """
+        # result = {}
+        result = []
+        for idx, div in enumerate(self.data):
+            annot = div.annot_to_tensor()
+            # Center Coordinate
+            center = annot[..., 14:16]
+            # Width and Height Values
+            corners = tf.transpose(get_corners(annot, img_width=image_size[0], img_height=image_size[1]), perm=[0, 1, 3, 2])
+            sorted_points = tf.sort(corners, direction='DESCENDING', axis=-1)
+            max_xy, min_xy = tf.transpose(sorted_points[..., 0:1], perm=[0, 1, 3, 2]), tf.transpose(sorted_points[..., -1:], perm=[0, 1, 3, 2])
+            wh = max_xy - min_xy
+            width, height = wh[..., 0] / image_size[0], wh[..., 1] / image_size[1]
+            # Class Label Values
+            cls_label = tf.cast(tf.argsort(annot[..., :13], direction='DESCENDING', axis=-1)[..., 0:1], dtype=tf.float32)
+            # result.update({f"{div.name}": tf.concat([cls_label, center, width, height], axis=-1).numpy()})
+            result.append(tf.concat([cls_label, center, width, height], axis=-1).numpy())
+     
+        return result
+
+    def save_annotations(self, path_to_project=None, backup_dir:str="/content/gdrive/MyDrive/colab_files/darknet_yolo/"):
+        """
+        Class Method that processes the formatted data from this object and saves it to the txt files
+        needed to train the darknet Yolo model.
+        """
+        if not path_to_project:
+            path_to_project = self.project_dir
+        # setting the default values for telling darknet where to find the image files
+        prefix = np.char.array(["data/obj/"], unicode=True)
+        suffix = np.char.array([".png"], unicode=True)
+        for idx, dataset in enumerate(self.data):
+            # Make sure there is a project folder created
+            assert(os.path.exists(f"{path_to_project}/obj"))
+            txt = prefix + self.img_files[idx] + suffix
+            # This saves the train/test split designations to a file specifing which split each image
+            # belongs to.
+            np.savetxt(f"{path_to_project}/{dataset.name}.txt", txt, fmt='%-s')
+            # No we loop through each split set from the data (train, val, test) and save a text file
+            # for each image containing the class and bounding box labels for that image.
+            for itm, label in enumerate(self.labels[idx]):
+                indices = np.where(np.sum(label, axis=-1) > 0)
+                np.savetxt(f'{path_to_project}/obj/{self.img_files[idx][itm]}.txt',
+                           label[indices],
+                           fmt='%-u %.9f %.9f %.9f %.9f')
+        # Setting up for the basic config files
+        class_num = int(np.max(self.labels[0][..., 0]) + 1)
+        obj_data = [f"classes = {class_num}\n"]
+        names = ["train", "valid", "test"]
+
+        for name, dataset in zip(names, self.data):
+            obj_data.append(f"{name} = data/{dataset.name}.txt\n")
+        obj_data.extend(["names = data/obj.names\n", f"backup = {backup_dir}\n"])   
+        # obj.data tells the model how many classes are in the dataset and where the data is along
+        # with setting a directory location for saving backup weights during training
+        with open(f"{path_to_project}/obj.data", 'w') as file:
+            file.writelines(obj_data)
+        # this last file records the names of the classes. I'd like to update this to except a list
+        # of names at somepoint, but it's really unnecessary for the moment and at least for this
+        # dataset there is no need to automate the creation of this file
+        with open(f"{path_to_project}/obj.names", 'w') as file2:
+            class_names = [f"{x}\n" for x in range(class_num)]
+            file2.writelines(class_names)

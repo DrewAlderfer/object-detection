@@ -1,0 +1,6 @@
+classes = 13
+train = data/train.txt
+valid = data/val.txt
+test = data/test.txt
+names = data/obj.names
+backup = /content/gdrive/MyDrive/colab_files/darknet_yolo/
