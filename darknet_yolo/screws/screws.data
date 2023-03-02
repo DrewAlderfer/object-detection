@@ -1,0 +1,6 @@
+classes = 13
+train = /content/screws/train.txt
+valid = /content/screws/val.txt
+test = /content/screws/test.txt
+names = /content/screws/screws.names
+backup = /content/gdrive/MyDrive/colab_files/darknet_yolo/

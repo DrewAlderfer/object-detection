@@ -165,9 +165,14 @@ def init_COCO(json_path:str, divs:List[str]):
     return result
 
 class DarknetTools:
-    def __init__(self, data:list, image_size:List[int], project_directory:str, make:bool=False):
+    def __init__(self, data:list,
+                 image_size:List[int],
+                 project_name:str='nn_project',
+                 project_directory:str,
+                 make:bool=False):
         self.data = data
         self.image_size = image_size
+        self._name = project_name
         self.project_dir = self._check_path(project_directory)
         self.image_paths = self._image_paths()
         self.img_files = self._img_files()
@@ -216,9 +221,11 @@ class DarknetTools:
             # Center Coordinate
             center = annot[..., 14:16]
             # Width and Height Values
-            corners = tf.transpose(get_corners(annot, img_width=image_size[0], img_height=image_size[1]), perm=[0, 1, 3, 2])
+            corners = tf.transpose(get_corners(annot, img_width=image_size[0],
+                                               img_height=image_size[1]), perm=[0, 1, 3, 2])
             sorted_points = tf.sort(corners, direction='DESCENDING', axis=-1)
-            max_xy, min_xy = tf.transpose(sorted_points[..., 0:1], perm=[0, 1, 3, 2]), tf.transpose(sorted_points[..., -1:], perm=[0, 1, 3, 2])
+            max_xy, min_xy = tf.transpose(sorted_points[..., 0:1],
+                                          perm=[0, 1, 3, 2]), tf.transpose(sorted_points[..., -1:], perm=[0, 1, 3, 2])
             wh = max_xy - min_xy
             width, height = wh[..., 0] / image_size[0], wh[..., 1] / image_size[1]
             # Class Label Values
@@ -258,15 +265,15 @@ class DarknetTools:
         names = ["train", "valid", "test"]
 
         for name, dataset in zip(names, self.data):
-            obj_data.append(f"{name} = data/{dataset.name}.txt\n")
-        obj_data.extend(["names = data/obj.names\n", f"backup = {backup_dir}\n"])   
+            obj_data.append(f"{name} = {self.project_name}/{dataset.name}.txt\n")
+        obj_data.extend([f"names = {self.project_name}/{self.project_name}.names\n", f"backup = {backup_dir}\n"])   
         # obj.data tells the model how many classes are in the dataset and where the data is along
         # with setting a directory location for saving backup weights during training
-        with open(f"{path_to_project}/obj.data", 'w') as file:
+        with open(f"{path_to_project}/{self.project_name}.data", 'w') as file:
             file.writelines(obj_data)
         # this last file records the names of the classes. I'd like to update this to except a list
         # of names at somepoint, but it's really unnecessary for the moment and at least for this
         # dataset there is no need to automate the creation of this file
-        with open(f"{path_to_project}/obj.names", 'w') as file2:
+        with open(f"{path_to_project}/{self.project_name}.names", 'w') as file2:
             class_names = [f"{x}\n" for x in range(class_num)]
             file2.writelines(class_names)

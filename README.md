@@ -215,6 +215,8 @@ my dataset and simple scripts to translate my labels to a format darknet will ac
 use this framework I removed the angle parameter from the labels and recalculated the points to 
 match what darknet expects.</p>
 
+<img src="./images/dn_result_01.jpg"><img/>
+
 ## Conclusions 
 
 <p><strong>Although this project</strong> has been difficutl to get into a strong place performance-wise

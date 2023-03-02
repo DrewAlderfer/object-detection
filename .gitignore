@@ -16,6 +16,7 @@ ipython_config.py
 .secret
 */.secret
 
+darknet_yolo/screws/images/*.png
 */data/*
 data/*
 *.tar.gz

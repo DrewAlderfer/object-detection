@@ -40,6 +40,7 @@ def generate_anchors(labels:NDArray[np.float32],
     # mask no object
     mask_labels = tf.cast(tf.reduce_sum(box_labels, axis=-1) > .001, dtype=tf.bool)
     box_labels = tf.boolean_mask(box_labels, mask_labels, axis=0).numpy()
+    print(f"box_labels: {box_labels.shape}")
     # find clusters
     clusters = KMeans(n_clusters=boxes_per_cell, max_iter=100, **kwargs)
     clusters.fit(box_labels)

@@ -78,12 +78,14 @@ def bg_rand_sample(images, target_size):
             result = img
     return result
 
+
 # %% [markdown]
 # ### Visualizing the result from our function.
 
 # %%
 result = bg_rand_sample([images[9]], target_size=[576, 768])
 print(f"result: {result.shape}")
+
 
 # %%
 def rowcol(data, base_size=(8, 6)):
@@ -102,6 +104,7 @@ def rowcol(data, base_size=(8, 6)):
     size = (base_size[0], ((base_size[0]/cols) * ratio ) * rows)
     
     return rows, cols, size
+
 
 # %%
 row, col, size = rowcol(result)
@@ -222,6 +225,38 @@ darknet = DarknetTools(data=[train_dataset, val_dataset, test_dataset], image_si
 
 # %%
 darknet.save_annotations()
+
+# %% [markdown]
+# ### Generate Anchors Based on the darknet labels
+
+# %%
+from sklearn.cluster import KMeans
+def get_darknet_anchors(box_labels, boxes_per_cell:int=9, target_size=[768, 576], **kwargs):
+
+    mask_labels = tf.cast(tf.reduce_sum(box_labels, axis=-1) > .001, dtype=tf.bool)
+    box_labels = tf.boolean_mask(box_labels, mask_labels, axis=0).numpy()
+
+    clusters = KMeans(n_clusters=boxes_per_cell, max_iter=100, **kwargs)
+    clusters.fit(box_labels)
+
+    centers = clusters.cluster_centers_ * np.array([target_size], dtype=np.float32)
+    c_areas = np.prod(centers, axis=-1)
+    idx_srt = np.argsort(c_areas)
+   
+    return centers[idx_srt].astype(np.int32)
+
+result = get_darknet_anchors(darknet_labels[..., 3:], 6, random_state=42)
+np.savetxt('./darknet_yolo/anchors.txt', result, fmt='%-d', delimiter=',', newline=',  ')
+
+# %% [markdown]
+# ### Resize images
+
+# %%
+darknet_images = glob('./darknet_yolo/images/screws_*.png')
+for img in darknet_images:
+    png = cv.imread(img)
+    png = cv.resize(png, [768, 576])
+    cv.imwrite(img, png)
 
 # %% [markdown]
 # # Finished
